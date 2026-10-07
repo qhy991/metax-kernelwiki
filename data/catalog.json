@@ -1,0 +1,36 @@
+{
+  "schema": "metax-kernelwiki.catalog.v1",
+  "target": "MetaX C550",
+  "entries": [
+    {
+      "id": "c550-device-identity",
+      "title": "产品、设备 ISA、编译 family 与兼容架构值",
+      "tags": ["C550", "xcore1002", "xcore1000", "identity", "wave"],
+      "confidence": "source-reported",
+      "evidence_scope": "external-observation",
+      "path": "wiki/device-identity.md",
+      "sources": ["https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md"],
+      "limitations": "历史调查与本机头文件观察；不构成此仓库的 kernel 性能验证。"
+    },
+    {
+      "id": "maca-toolchain",
+      "title": "MACA C++ 和 mcTriton 编译路线",
+      "tags": ["mxcc", "mcfatbin", "triton", "compiler", "MACA"],
+      "confidence": "documented",
+      "evidence_scope": "upstream-source",
+      "path": "docs/toolchain.md",
+      "sources": ["https://github.com/MetaX-MACA/mcTriton"],
+      "limitations": "上游版本与宿主安装版本分别记录；源码选项不等于 C550 性能结论。"
+    },
+    {
+      "id": "maca-event-timing",
+      "title": "事件批次计时、逻辑带宽与测量边界",
+      "tags": ["timing", "event", "bandwidth", "cache", "measurement"],
+      "confidence": "experimental",
+      "evidence_scope": "protocol",
+      "path": "docs/methodology.md",
+      "sources": ["https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html"],
+      "limitations": "探针协议；未验证运行时缓存策略的事件区间不是 DRAM 峰值带宽或纯 launch latency。"
+    }
+  ]
+}

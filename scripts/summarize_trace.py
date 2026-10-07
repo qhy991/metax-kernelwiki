@@ -4,6 +4,8 @@
 Supports the observed mcTracer 3.5.3 export: complete events on pid 2/category 0
 with kernel block/grid/memory metadata. Process ids and timestamps are used only
 to select/order events; they are never emitted in the public summary.
+Initial-launch and warmup removal applies to one contiguous prefix, so use a
+single-case trace; it does not remove interspersed warmups in a multi-case sweep.
 """
 import argparse
 from collections import Counter
@@ -43,10 +45,12 @@ def duration_summary(values):
             "max": max(values), "mean": statistics.mean(values)}
 
 
-def summarize_trace(document, expected_launches, warmups):
+def summarize_trace(document, expected_launches, warmups, initial_launches=0):
     if (type(expected_launches) is not int or expected_launches <= 0
-            or type(warmups) is not int or not 0 <= warmups < expected_launches):
-        raise ValueError("Expected launches must be positive and exceed the warmup count")
+            or type(warmups) is not int or warmups < 0
+            or type(initial_launches) is not int or initial_launches < 0
+            or warmups + initial_launches >= expected_launches):
+        raise ValueError("Expected launches must exceed the nonnegative initial and warmup counts")
     if not isinstance(document, dict) or not isinstance(document.get("traceEvents"), list):
         raise ValueError("Malformed trace: expected a traceEvents array")
     events = document["traceEvents"]
@@ -74,7 +78,10 @@ def summarize_trace(document, expected_launches, warmups):
         raise ValueError(f"GPU kernel count mismatch: expected {expected_launches}, observed {len(kernels)}")
     kernels.sort(key=lambda event: event["ts"])
     durations = [event["dur"] for event in kernels]
-    timed = durations[warmups:]
+    timed = durations[initial_launches + warmups:]
+    recompiled = [event["args"].get("is_recompiled") for event in kernels]
+    if any(value is not None and type(value) is not bool for value in recompiled):
+        raise ValueError("Invalid is_recompiled flag: expected boolean or missing")
     resources = {}
     for field in RESOURCE_FIELDS:
         observed = [resource_value(event["args"], field) for event in kernels]
@@ -91,9 +98,17 @@ def summarize_trace(document, expected_launches, warmups):
         "duration_conversion_applied": False,
         "event_count": len(events),
         "gpu_kernel_count": len(kernels),
+        "initial_launch_kernel_count": initial_launches,
         "warmup_kernel_count": warmups,
         "timed_kernel_count": len(timed),
-        "warmup_assignment": "caller-specified first kernels ordered by raw timestamp",
+        "warmup_assignment": "caller-specified initial launches then warmups ordered by raw timestamp",
+        "recompiled_flag": {
+            "true_count": sum(value is True for value in recompiled),
+            "false_count": sum(value is False for value in recompiled),
+            "missing_count": sum(value is None for value in recompiled),
+            "values_by_launch": recompiled,
+            "scope": "kernel-event descriptor flag, not a count of compilation operations",
+        },
         "raw_durations": durations,
         "raw_durations_after_warmups": timed,
         "raw_duration_summary": duration_summary(durations),
@@ -107,6 +122,8 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("--expected-launches", type=int, required=True)
     parser.add_argument("--warmups", type=int, default=0)
+    parser.add_argument("--initial-launches", type=int, default=0,
+                        help="separate diagnostic launches before warmup, excluded from timed summaries")
     args = parser.parse_args()
     try:
         try:
@@ -117,7 +134,7 @@ def main():
             document = json.loads(contents)
         except json.JSONDecodeError as error:
             raise ValueError("Malformed trace JSON") from error
-        result = summarize_trace(document, args.expected_launches, args.warmups)
+        result = summarize_trace(document, args.expected_launches, args.warmups, args.initial_launches)
         print(json.dumps(result, indent=2, allow_nan=False))
         return 0
     except ValueError as error:

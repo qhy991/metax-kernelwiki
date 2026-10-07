@@ -30,6 +30,16 @@ def default_cases() -> list[dict]:
     return [dict(c, warmups=20, samples=10, launches=100) for c in cases]
 
 
+def block_boundary_cases() -> list[dict]:
+    cases = []
+    for block in (512, 1024):
+        for n in (1, 511, 513, 1023, 1024, 1025, 4097, (1 << 22) + 13):
+            cases.append(dict(id=f"copy_n{n}_b{block}", kind="copy", n=n, stride=1, block=block))
+    for block in (512, 1024):
+        cases.append(dict(id=f"empty_b{block}", kind="empty", n=0, stride=0, block=block))
+    return [dict(c, warmups=20, samples=10, launches=100) for c in cases]
+
+
 def read_plan(path: Path, input_elements: int = INPUT_ELEMENTS) -> list[dict]:
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
@@ -48,7 +58,7 @@ def read_plan(path: Path, input_elements: int = INPUT_ELEMENTS) -> list[dict]:
                              for ch in c["id"]) or c["id"] in ids:
             raise ValueError("Invalid or duplicate case id")
         ids.add(c["id"])
-        if c["block"] not in (64, 128, 256, 512):
+        if c["block"] not in (64, 128, 256, 512, 1024):
             raise ValueError("Unsupported block")
         if (c["warmups"], c["samples"], c["launches"]) != (20, 10, 100):
             raise ValueError("Unsupported timing protocol")
@@ -72,10 +82,12 @@ def require_binary32_little_endian() -> None:
         raise ValueError("This format requires little-endian float32 and uint32")
 
 
-def prepare(destination: Path) -> dict:
+def prepare(destination: Path, suite: str = "default") -> dict:
     require_binary32_little_endian()
+    if suite not in ("default", "block-boundary"):
+        raise ValueError("Unknown preparation suite")
     destination.mkdir(parents=True, exist_ok=False)
-    cases = default_cases()
+    cases = default_cases() if suite == "default" else block_boundary_cases()
     with (destination / "input.f32").open("wb") as handle:
         # All values are finite, unique and exactly representable in float32.
         chunk = 1 << 18
@@ -99,7 +111,8 @@ def prepare(destination: Path) -> dict:
         "comparison": "bitwise equality for all payload elements and guards",
     }
     (destination / "oracle.json").write_text(json.dumps(oracle, indent=2) + "\n")
-    return {"prepared": str(destination), "cases": len(cases), "input_bytes": INPUT_ELEMENTS * 4}
+    return {"prepared": str(destination), "suite": suite, "cases": len(cases),
+            "input_bytes": INPUT_ELEMENTS * 4}
 
 
 def read_words(path: Path, count: int) -> array.array:
@@ -167,8 +180,19 @@ def validate_records(records: list[dict], cases: list[dict], input_elements: int
         raise ValueError("Expected exactly one visible MetaX C550")
     if type(device.get("wave_size_api")) is not int or device["wave_size_api"] <= 0:
         raise ValueError("Missing or invalid device wave size")
+    record_first_launch = protocol.get("record_first_launch", False)
+    additional_launches = protocol.get("additional_launches_per_case", 0)
+    if (type(record_first_launch) is not bool
+            or type(additional_launches) is not int
+            or additional_launches != int(record_first_launch)):
+        raise ValueError("Invalid first-launch protocol")
+    if record_first_launch:
+        for field in ("MACA_CACHE_PATH", "MACA_CACHE_DISABLE"):
+            if field not in protocol or (protocol[field] is not None and not isinstance(protocol[field], str)):
+                raise ValueError(f"Missing or invalid first-launch protocol field: {field}")
     by_id = {c["id"]: c for c in cases}
     declarations = {}
+    first_launches = {}
     samples = {key: [] for key in by_id}
     for record in records:
         kind = record.get("type")
@@ -190,9 +214,26 @@ def validate_records(records: list[dict], cases: list[dict], input_elements: int
             if any(record.get(k) != value for k, value in expected.items()):
                 raise ValueError(f"Case metadata mismatch: {key}")
             declarations[key] = record
+        elif kind == "first_launch":
+            if not record_first_launch:
+                raise ValueError(f"Unexpected first-launch record: {key}")
+            if key not in declarations or key in first_launches or samples[key]:
+                raise ValueError(f"Misordered or duplicate first-launch record: {key}")
+            value = record.get("first_launch_host_complete_us")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Invalid first_launch_host_complete_us: {key}")
+            attributes = record.get("function_attributes_after_first_launch")
+            if (not isinstance(attributes, dict)
+                    or any(type(attributes.get(field)) is not int or attributes[field] < minimum
+                           for field, minimum in (("maxThreadsPerBlock", 1), ("numRegs", 0),
+                                                  ("sharedSizeBytes", 0), ("localSizeBytes", 0)))):
+                raise ValueError(f"Missing or invalid function attributes: {key}")
+            first_launches[key] = record
         elif kind == "sample":
             if key not in declarations:
                 raise ValueError(f"Sample precedes declaration: {key}")
+            if record_first_launch and key not in first_launches:
+                raise ValueError(f"Sample precedes first-launch record: {key}")
             for field in ("event_batch_ms", "host_enqueue_batch_us"):
                 value = record.get(field)
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
@@ -202,6 +243,8 @@ def validate_records(records: list[dict], cases: list[dict], input_elements: int
             raise ValueError(f"Unknown record type: {kind}")
     if set(declarations) != set(by_id):
         raise ValueError("Missing case declaration")
+    if record_first_launch and set(first_launches) != set(by_id):
+        raise ValueError("Missing first-launch record")
     for key, c in by_id.items():
         ids = [row.get("sample") for row in samples[key]]
         if any(type(index) is not int for index in ids) or sorted(ids) != list(range(c["samples"])):
@@ -221,9 +264,15 @@ def check(input_directory: Path, output_directory: Path) -> dict:
     validate_input(source)
     records = [json.loads(line) for line in (output_directory / "raw.jsonl").read_text().splitlines()]
     samples = validate_records(records, cases, INPUT_ELEMENTS)
+    first_launches = {r["id"]: r
+                      for r in records if r["type"] == "first_launch"}
     summaries = []
     for c in cases:
         row = {"id": c["id"], "kind": c["kind"], "n": c["n"], "stride": c["stride"], "block": c["block"]}
+        if c["id"] in first_launches:
+            first = first_launches[c["id"]]
+            row["first_launch_host_complete_us"] = first["first_launch_host_complete_us"]
+            row["function_attributes_after_first_launch"] = first["function_attributes_after_first_launch"]
         if c["kind"] != "empty":
             output = read_words(output_directory / f"{c['id']}.f32", c["n"] + 2 * GUARD_ELEMENTS)
             row.update(validate_output(c, source, output))
@@ -236,7 +285,7 @@ def check(input_directory: Path, output_directory: Path) -> dict:
         if c["n"]:
             row["logical_gbps_at_median"] = c["n"] * 8 / (statistics.median(timings) * 1000)
         summaries.append(row)
-    return {
+    result = {
         "status": "pass",
         "checker": "CPU-only bitwise oracle over every output element; guard words verified",
         "input_finite_count": INPUT_ELEMENTS,
@@ -245,18 +294,27 @@ def check(input_directory: Path, output_directory: Path) -> dict:
         "throughput_scope": "logical GB/s in decimal units, not DRAM bandwidth",
         "cases": summaries,
     }
+    if first_launches:
+        result["first_launch_timing_scope"] = (
+            "one additional launch per case before the 20 warmups; host monotonic clock around "
+            "launch, error check and device synchronization; includes any lazy initialization/JIT "
+            "triggered there; previous device work synchronized before timing; not pure GPU latency "
+            "or a fresh process per case")
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     command = parser.add_subparsers(dest="command", required=True)
-    command.add_parser("prepare").add_argument("directory", type=Path)
+    preparation = command.add_parser("prepare")
+    preparation.add_argument("directory", type=Path)
+    preparation.add_argument("--suite", choices=("default", "block-boundary"), default="default")
     checker = command.add_parser("check")
     checker.add_argument("input_directory", type=Path)
     checker.add_argument("output_directory", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory) if args.command == "prepare" else check(args.input_directory, args.output_directory)
+        result = prepare(args.directory, args.suite) if args.command == "prepare" else check(args.input_directory, args.output_directory)
         print(json.dumps(result, indent=2, allow_nan=False))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as error:

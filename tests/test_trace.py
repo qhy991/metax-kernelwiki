@@ -45,6 +45,28 @@ class TraceAcceptanceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No supported GPU kernel events"):
             trace.summarize_trace({"traceEvents": [event]}, 1, 0)
 
+    def test_initial_launch_is_separate_from_warmup(self):
+        result = trace.summarize_trace(
+            {"traceEvents": [kernel(10, 99), kernel(20, 8), kernel(30, 7)]}, 3, 1, 1)
+        self.assertEqual(result["initial_launch_kernel_count"], 1)
+        self.assertEqual(result["warmup_kernel_count"], 1)
+        self.assertEqual(result["timed_kernel_count"], 1)
+        self.assertEqual(result["raw_durations_after_warmups"], [7])
+
+    def test_missing_recompile_flag_is_not_false(self):
+        first, second, third = kernel(10, 9), kernel(20, 8), kernel(30, 7)
+        first["args"]["is_recompiled"] = True
+        third["args"]["is_recompiled"] = False
+        flags = trace.summarize_trace({"traceEvents": [first, second, third]}, 3, 0)["recompiled_flag"]
+        self.assertEqual(flags["values_by_launch"], [True, None, False])
+        self.assertEqual((flags["true_count"], flags["false_count"], flags["missing_count"]), (1, 1, 1))
+
+    def test_nonboolean_recompile_flag_is_rejected(self):
+        event = kernel(10, 9)
+        event["args"]["is_recompiled"] = 1
+        with self.assertRaisesRegex(ValueError, "is_recompiled flag"):
+            trace.summarize_trace({"traceEvents": [event]}, 1, 0)
+
     def test_process_success_without_gpu_trace_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "No supported GPU kernel events"):
             trace.summarize_trace({"returncode": 0, "traceEvents": []}, 1, 0)

@@ -28,10 +28,19 @@ and missing samples, metadata or payloads fail the checker.
 
 ## Workload and exact oracle
 
-The authoritative cases.tsv plan contains 49 cases: copy with blocks
+By default, the authoritative cases.tsv plan contains 49 cases: copy with blocks
 64/128/256/512, lengths 1/63/64/65/127/129/511/513/4097/4194317; gather with
 1,048,573 outputs, block 256 and strides 1/2/4/8/16; empty one-block kernels
 with each block size.
+
+The optional `prepare DIRECTORY --suite block-boundary` writes an 18-case
+CPU-only plan: copy with blocks 512/1024 at each length
+1/511/513/1023/1024/1025/4097/4194317, then empty kernels with blocks 512/1024.
+Both Python and C++ admit only blocks 64/128/256/512/1024. Blocks 1025 and
+2048 are refused by host plan validation, before any device API call. Admission
+of 1024 is an experiment configuration, not a general C550 support guarantee;
+the runtime device limit is still checked, and launch/synchronization errors
+still fail the run. The default plan and its launch counts remain unchanged.
 
 Input i is float32(i), for 0 <= i < 16,777,216. Every input is finite, unique
 and exactly representable. Gather uses input[i * stride] without wraparound,
@@ -70,6 +79,41 @@ Increasing gather stride changes both input footprint and transaction access;
 these timings alone cannot separate cache effects from coalescing effects.
 This probe collects no profiler counters.
 
+For the boundary investigation, invoke
+`probe --run INPUT_DIRECTORY FRESH_OUTPUT_DIRECTORY --record-first-launch`.
+This opt-in flag adds **one launch per case**, before the unchanged 20 warmups
+and 10 samples of 100 launches: 1021 launches per case, or 18,378 for all 18
+boundary cases. Without this flag there are still 1020 launches per case, even
+when using the boundary plan. The TSV format remains unchanged.
+
+Before this additional launch, the probe synchronizes all previous device work
+outside the measurement. A host monotonic clock then brackets the launch,
+`mcGetLastError` and `mcDeviceSynchronize`. Its `first_launch` record reports
+`first_launch_host_complete_us`, including any lazy initialization/JIT triggered
+within that interval. Allocation, input transfer, output initialization, previous
+case completion and earlier runtime initialization lie outside it. Each case
+shares the process and any surviving runtime/compiler caches with earlier cases;
+this is neither a cold process measurement per case nor pure GPU latency.
+
+Only after that interval, `mcFuncGetAttributes` queries the selected kernel and
+records `maxThreadsPerBlock`, `numRegs`, `sharedSizeBytes` and `localSizeBytes`
+under `function_attributes_after_first_launch`. These are runtime function
+attributes observed after execution, not prelaunch static evidence or a device
+limit. The query does not reject a block based on the function attribute: the
+boundary experiment is intended to observe actual launch behavior. An attribute
+query failure still fails the run. The optional protocol records
+`record_first_launch=true`, `additional_launches_per_case=1`, `MACA_CACHE_PATH`
+and `MACA_CACHE_DISABLE` (strings or JSON null). Environment values alone do not
+establish effective JIT cache behavior. Preserve the raw values privately and
+redact local paths from public projections.
+
+The CPU checker accepts earlier records with no optional protocol fields. With
+first-launch recording enabled, it requires one valid record per case before
+its samples, positive finite host timing and complete integer function
+attributes. It preserves these observations in the checked report. The flag
+adds no per-launch output snapshots: the independent oracle and guards still
+verify the final output of every nonempty case.
+
 In the inspected MACA 3.5.3 header, waveSize aliases warpSize. Both recorded
 fields therefore represent one API observation, not two independent hardware
 confirmations. Kernels assume no wave width or peak performance number.
@@ -79,6 +123,8 @@ confirmations. Kernels assume no wave width or peak performance number.
 Run python3 -m unittest discover -s tests -p test_native_probe.py. These tests
 check corrupted input, wrong indices, nonfinite payloads, guard writes, missing
 or duplicate timing samples and metadata mismatch on synthetic CPU fixtures.
+They also verify the boundary plan, host plan rejection of unsupported blocks,
+and missing, duplicate, misordered or invalid optional first-launch records.
 They do not compile MACA C++ or prove GPU correctness.
 
 ## 已验证的现有本机分配入口

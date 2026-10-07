@@ -1,7 +1,9 @@
 """CPU oracle tests only: these do not establish MACA compilation or GPU correctness."""
 import array
+import csv
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 SPEC = importlib.util.spec_from_file_location(
@@ -63,6 +65,33 @@ class NativeOracleTest(unittest.TestCase):
                 self.assertLessEqual((c["n"] + 64) * 4, 64 << 20)
         self.assertEqual({c["block"] for c in cases if c["kind"] == "copy"}, {64, 128, 256, 512})
         self.assertTrue(any(c["n"] % c["block"] for c in cases if c["kind"] == "copy"))
+        self.assertTrue(all((c["warmups"], c["samples"], c["launches"]) == (20, 10, 100) for c in cases))
+
+    def write_plan(self, directory, cases):
+        path = Path(directory) / "cases.tsv"
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=probe.COLUMNS, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(cases)
+        return path
+
+    def test_block_boundary_plan_roundtrip(self):
+        cases = probe.block_boundary_cases()
+        expected = {(block, n) for block in (512, 1024)
+                    for n in (1, 511, 513, 1023, 1024, 1025, 4097, 4194317)}
+        self.assertEqual(len(cases), 18)
+        self.assertEqual({(c["block"], c["n"]) for c in cases if c["kind"] == "copy"}, expected)
+        self.assertEqual({c["block"] for c in cases if c["kind"] == "empty"}, {512, 1024})
+        self.assertTrue(all((c["warmups"], c["samples"], c["launches"]) == (20, 10, 100) for c in cases))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(probe.read_plan(self.write_plan(directory, cases)), cases)
+
+    def test_unsupported_blocks_are_refused_before_device_use(self):
+        for block in (1025, 2048):
+            with self.subTest(block=block), tempfile.TemporaryDirectory() as directory:
+                case = dict(self.case, block=block)
+                with self.assertRaisesRegex(ValueError, "Unsupported block"):
+                    probe.read_plan(self.write_plan(directory, [case]))
 
     def records(self):
         c = self.case
@@ -81,6 +110,70 @@ class NativeOracleTest(unittest.TestCase):
 
     def test_complete_records_accepted(self):
         self.assertEqual(len(probe.validate_records(self.records(), [self.case], 160)[self.case["id"]]), 10)
+
+    def first_launch_records(self):
+        records = self.records()
+        records[1].update(record_first_launch=True, additional_launches_per_case=1,
+                          MACA_CACHE_PATH=None, MACA_CACHE_DISABLE=None)
+        records.insert(3, dict(type="first_launch", id=self.case["id"],
+                               first_launch_host_complete_us=2000.0,
+                               function_attributes_after_first_launch=dict(
+                                   maxThreadsPerBlock=512, numRegs=16, sharedSizeBytes=0, localSizeBytes=0)))
+        return records
+
+    def test_first_launch_records_are_accepted_without_changing_timed_samples(self):
+        result = probe.validate_records(self.first_launch_records(), [self.case], 160)
+        self.assertEqual(len(result[self.case["id"]]), 10)
+
+    def test_missing_duplicate_or_unexpected_first_launch_refused(self):
+        for mutation in ("missing", "duplicate", "unexpected", "late"):
+            records = self.first_launch_records()
+            if mutation == "missing":
+                records.pop(3)
+            elif mutation == "duplicate":
+                records.insert(4, dict(records[3]))
+            elif mutation == "unexpected":
+                records[1].update(record_first_launch=False, additional_launches_per_case=0)
+            else:
+                records[3], records[4] = records[4], records[3]
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "first-launch record"):
+                probe.validate_records(records, [self.case], 160)
+
+    def test_invalid_first_launch_timing_refused(self):
+        for value in (None, True, 0, -1, float("nan"), float("inf")):
+            records = self.first_launch_records()
+            records[3]["first_launch_host_complete_us"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Invalid first_launch_host_complete_us"):
+                probe.validate_records(records, [self.case], 160)
+
+    def test_first_launch_attributes_must_be_complete_and_valid(self):
+        for field in ("maxThreadsPerBlock", "numRegs", "sharedSizeBytes", "localSizeBytes"):
+            for value in (None, -1, True, 1.5):
+                records = self.first_launch_records()
+                attributes = records[3]["function_attributes_after_first_launch"]
+                if value is None:
+                    attributes.pop(field)
+                else:
+                    attributes[field] = value
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "function attributes"):
+                    probe.validate_records(records, [self.case], 160)
+        records = self.first_launch_records()
+        records[3]["function_attributes_after_first_launch"]["maxThreadsPerBlock"] = 0
+        with self.assertRaisesRegex(ValueError, "function attributes"):
+            probe.validate_records(records, [self.case], 160)
+
+    def test_first_launch_protocol_must_declare_extra_launch_and_cache_environment(self):
+        for field, value in (("record_first_launch", 1), ("additional_launches_per_case", 0),
+                             ("additional_launches_per_case", True), ("MACA_CACHE_DISABLE", 1)):
+            records = self.first_launch_records()
+            records[1][field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "first-launch protocol"):
+                probe.validate_records(records, [self.case], 160)
+        for field in ("additional_launches_per_case", "MACA_CACHE_PATH", "MACA_CACHE_DISABLE"):
+            records = self.first_launch_records()
+            records[1].pop(field)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "first-launch protocol"):
+                probe.validate_records(records, [self.case], 160)
 
     def test_missing_and_duplicate_samples_refused(self):
         for mutation in ("missing", "duplicate"):

@@ -65,8 +65,8 @@ std::vector<Case> read_plan(const std::string& directory) {
             throw std::runtime_error("Unsafe case id");
         for (const auto& old : cases)
             if (old.id == c.id) throw std::runtime_error("Duplicate case id");
-        if (c.block != 64 && c.block != 128 && c.block != 256 && c.block != 512)
-            throw std::runtime_error("Block must be 64, 128, 256 or 512");
+        if (c.block != 64 && c.block != 128 && c.block != 256 && c.block != 512 && c.block != 1024)
+            throw std::runtime_error("Block must be 64, 128, 256, 512 or 1024");
         if (c.warmups != 20 || c.samples != 10 || c.launches != 100)
             throw std::runtime_error("Probe fixes 20 warmups and 10 samples of 100 launches");
         if (c.kind == "empty") {
@@ -106,7 +106,8 @@ void launch(const Case& c, const float* input, float* output) {
     MC_CHECK(mcGetLastError());
 }
 
-void run(const std::string& input_directory, const std::string& output_directory) {
+void run(const std::string& input_directory, const std::string& output_directory,
+         bool record_first_launch) {
     const uint16_t endian = 1;
     if (*reinterpret_cast<const uint8_t*>(&endian) != 1 || sizeof(float) != 4)
         throw std::runtime_error("Probe requires little-endian binary32 host");
@@ -155,7 +156,16 @@ void run(const std::string& input_directory, const std::string& output_directory
                "\"wave_size_note\":\"MACA 3.5.3 headers alias waveSize to warpSize; both fields are one API observation\","
                "\"MACA_LAUNCH_MODE\":" << json_environment("MACA_LAUNCH_MODE")
             << ",\"MACA_LAUNCH_BLOCKING\":" << json_environment("MACA_LAUNCH_BLOCKING")
-            << ",\"MACA_DIRECT_DISPATCH\":" << json_environment("MACA_DIRECT_DISPATCH") << "}\n";
+            << ",\"MACA_DIRECT_DISPATCH\":" << json_environment("MACA_DIRECT_DISPATCH");
+    if (record_first_launch) {
+        records << ",\"record_first_launch\":true,\"additional_launches_per_case\":1,"
+                   "\"first_launch_timing_scope\":\"host monotonic clock around one launch, error check and device synchronization; "
+                   "includes any lazy initialization/JIT triggered there; prior device work synchronized before timing; "
+                   "before 20 warmups; not pure GPU latency or a fresh process per case\"";
+        records << ",\"MACA_CACHE_PATH\":" << json_environment("MACA_CACHE_PATH")
+                << ",\"MACA_CACHE_DISABLE\":" << json_environment("MACA_CACHE_DISABLE");
+    }
+    records << "}\n";
     records.flush();
     float* device_input = nullptr;
     MC_CHECK(mcMalloc(reinterpret_cast<void**>(&device_input), input.size() * sizeof(float)));
@@ -184,6 +194,32 @@ void run(const std::string& input_directory, const std::string& output_directory
                 << ",\"input_span_bytes\":" << (c.n ? ((c.n - 1) * c.stride + 1) * sizeof(float) : 0)
                 << ",\"output_file\":" << (c.kind == "empty" ? "null" : json_string(c.id + ".f32")) << "}\n";
         float* payload = device_output ? device_output + kGuardElements : nullptr;
+        if (record_first_launch) {
+            // Preserve the active case even if its first launch or synchronization fails.
+            records.flush();
+            // Drain allocation/memset and prior cases outside this host interval.
+            MC_CHECK(mcDeviceSynchronize());
+            const auto first_start = std::chrono::steady_clock::now();
+            launch(c, device_input, payload);
+            MC_CHECK(mcDeviceSynchronize());
+            const auto first_stop = std::chrono::steady_clock::now();
+            const double first_us = std::chrono::duration<double, std::micro>(first_stop - first_start).count();
+            if (!std::isfinite(first_us) || first_us <= 0)
+                throw std::runtime_error("Nonpositive or nonfinite first-launch host timing");
+            // Query only after timing: the query may itself trigger lazy loading.
+            mcFuncAttributes attributes{};
+            const void* function = c.kind == "copy" ? reinterpret_cast<const void*>(copy_kernel)
+                                 : c.kind == "gather" ? reinterpret_cast<const void*>(gather_kernel)
+                                 : reinterpret_cast<const void*>(empty_kernel);
+            MC_CHECK(mcFuncGetAttributes(&attributes, function));
+            records << "{\"type\":\"first_launch\",\"id\":" << json_string(c.id)
+                    << ",\"first_launch_host_complete_us\":" << first_us
+                    << ",\"function_attributes_after_first_launch\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
+                    << ",\"numRegs\":" << attributes.numRegs
+                    << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
+                    << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}}\n";
+            records.flush();
+        }
         for (unsigned i = 0; i < c.warmups; ++i) launch(c, device_input, payload);
         MC_CHECK(mcDeviceSynchronize());
         for (unsigned sample = 0; sample < c.samples; ++sample) {
@@ -227,11 +263,12 @@ void run(const std::string& input_directory, const std::string& output_directory
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 4 || std::string(argv[1]) != "--run") {
-            std::cerr << "Usage: probe --run INPUT_DIRECTORY FRESH_OUTPUT_DIRECTORY\n";
+        if ((argc != 4 && argc != 5) || std::string(argv[1]) != "--run"
+            || (argc == 5 && std::string(argv[4]) != "--record-first-launch")) {
+            std::cerr << "Usage: probe --run INPUT_DIRECTORY FRESH_OUTPUT_DIRECTORY [--record-first-launch]\n";
             return 2;
         }
-        run(argv[2], argv[3]);
+        run(argv[2], argv[3], argc == 5);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "{\"type\":\"error\",\"message\":" << json_string(error.what()) << "}\n";

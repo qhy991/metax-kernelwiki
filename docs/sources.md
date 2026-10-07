@@ -10,15 +10,19 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 
 ## 已核实的文档入口
 
+运行时指南现在固定引用官方 **3.5.3.x** 版本。初轮查阅的[旧入口 `/preview/567`][runtime-legacy]仍保留以便追溯；2026-10-07 读取该页的版本选择器时，活动版本是 **3.0.0.x**。它不能作为当前主机 3.5.3.18 的版本标识。以下 3.5.3.x 页面已重新检查执行模型、设备查询和编译章节；系列文档仍不等于 C550 本机验证。
+
 | 资料 | 可以支持什么 | 使用边界 |
 | --- | --- | --- |
-| [曦云系列运行时 API 编程指南][runtime] | 执行模型称 64 个线程为 wave；设备查询、内存、事件、kernel 启动和 MXCC 工程构建的入口 | 系列指南；数值仍需 C550 查询。指南示例用 `mcDeviceProp_t.waveSize`，本地 SDK 头文件可能含兼容别名 |
+| [曦云系列运行时 API 编程指南 3.5.3.x][runtime] | 执行模型称 64 个线程为 wave；设备查询、内存、事件、kernel 启动和 MXCC 工程构建的入口 | 系列指南；数值仍需 C550 查询。指南示例用 `mcDeviceProp_t.waveSize`，本地 SDK 头文件可能含兼容别名 |
+| [运行时指南 3.5.3.x：Binary Cache][runtime-cache]、[环境变量][runtime-env] | §4.3 的未标注 launch bounds、1024-thread vector-add 示例说明 block 大于 512 会触发重编译和 binary cache；§4.4 定义缓存路径及禁用开关 | 这是该示例的文档行为，不是所有 kernel 的性能保证。需在本机区分设备上限、函数属性、首次 launch 与后续执行 |
 | [MXMACA 发布说明：概述][release-overview] | 各软件组件的发布版本和产品系列适用范围 | `latest` 会移动，不等于实机安装版本 |
 | [MXMACA 发布说明：新增特性及变更][release-changes] | 判断功能在什么版本出现；例如 3.7.0 节记录 `-offload-arch=native`，也记录工具与编译器变更 | 不据此认定宿主 3.5.3 已具备新版本功能；也不据旧记录否定本地回移补丁 |
 | [MXMACA 发布说明：已知问题和使用限制][release-limits] | 发现需针对性排查的版本及场景限制，包括 C550 OAM 的部分通信算子问题 | 限制有具体场景，不能外推到所有 C550 kernel；不直接照抄环境变量作为优化配置 |
 | [官方性能优化指南 README][guide] | `guide/`、`case/`、`microbenchmark/` 的导航；原仓库声明测试设备为 C500 与 A100 | 其 C500 数值只作为待验证的先验。检索时页面未声明许可证，优先链接、转述及独立编写探针 |
 | [官方向量加教程][vector-guide] | 可参考 `cucc` 路由、设备内存使用、预热、事件计时和错误检查 | 教程属于 C500 场景；用 CUDA 名称的接口是兼容表面，不是 NVIDIA 硬件身份 |
 | [mcProfiler 使用手册 PDF][profiler] | 性能计数器采集工具的使用入口、任务参数和指标选择 | 链接是较早文档；本次尚未验证 C550 所装工具的 CLI、权限和指标集 |
+| [mcTracer 使用手册 3.5.3.x][tracer]、[Viewer 章节][tracer-viewer] | 采集参数、输出 JSON 文件、专用 Viewer 入口；`/preview/995` 的版本选择器也标注 3.5.3.x | 已查阅采集与 Viewer 章节，但未找到导出 JSON 的 `ts` / `dur` 单位契约。不能用上游 MCPTI timestamp 单位或数值量级代替 exporter 的证据 |
 | [mxvs 测试工具套件 3.5.3.x 目录][mxvs] | 设备信息、PCIe、Memory、MetaXLink 和算力测试的官方参考入口 | 与自写 kernel 的计时范围不同，结果需分别报告；本轮未运行 |
 
 ## 已核实的官方代码
@@ -46,13 +50,18 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 5. **WSM 访问：**共享内存步长、广播与 padding 如何影响延迟？先测冲突模式，再解释 bank 结构；不预设 NVIDIA 的 bank 数和 bank 宽。
 6. **编译决策：**在同一已验证计算上，`num_warps`、`num_stages`、`basic/cpasync` 是否改变产物、正确性和时间？只有本机版本支持的选项才进入实验，不由选项名称推定硬件指令。
 
-[runtime]: https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html
+[runtime]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/index.html
+[runtime-legacy]: https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html
+[runtime-cache]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编译和调试.html#binary-cache
+[runtime-env]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编译和调试.html#irs9wigbg1oh1
 [release-overview]: https://developer.metax-tech.com/api/client/document/preview/发布说明/MXMACA_发布说明/曦云C500系列/latest/split_files/概述.html
 [release-changes]: https://developer.metax-tech.com/api/client/document/preview/发布说明/MXMACA_发布说明/曦云C500系列/latest/split_files/新增特性及变更.html
 [release-limits]: https://developer.metax-tech.com/api/client/document/preview/发布说明/MXMACA_发布说明/曦云C500系列/latest/split_files/已知问题和使用限制.html
 [guide]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/main/README.md
 [vector-guide]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/main/guide/ch1.初探异构编程.vectoradd.md
 [profiler]: https://developer.metax-tech.com/api/client/document/file/211/preview/?file_type=pdf
+[tracer]: https://developer.metax-tech.com/api/client/document/preview/性能测试及分析工具/mcTracer使用手册/曦云C500系列/3.5.3.x/split_files/mctracer.html
+[tracer-viewer]: https://developer.metax-tech.com/api/client/document/preview/性能测试及分析工具/mcTracer使用手册/曦云C500系列/3.5.3.x/split_files/mctracer_viewer.html
 [mxvs]: https://developer.metax-tech.com/api/client/document/preview/996/index.html
 [triton-readme]: https://github.com/MetaX-MACA/mcTriton/blob/7dd407c26568fceaca44cb894138e5202d369805/README.md
 [triton-driver]: https://github.com/MetaX-MACA/mcTriton/blob/7dd407c26568fceaca44cb894138e5202d369805/third_party/metax/backend/driver.py

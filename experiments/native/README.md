@@ -134,8 +134,13 @@ They do not compile MACA C++ or prove GPU correctness.
 验证原 owner 的源码未修改后调用其 `admit_local_job`，再 exec 原生程序。
 没有自行创建锁协议，也没有在 broker 不可用时直接运行的 fallback。
 
+`--lock-scope user` 是兼容默认值。若节点已有支持设备级锁的 owner，可显式使用
+`--lock-scope device`；调用器把物理设备、scope 和零排队时限直接交给该 owner，
+由 owner 设置可见设备并取得设备锁及旧用户锁的兼容共享模式。旧 owner 缺少此
+API 时拒绝运行，不退回另一种分配。仅更改可见设备环境变量不会缩小旧锁的范围。
+
 在本次节点，该旧版用户级锁排斥所有遵循同一 namespace 的作业；新设备级作业
-持有同一旧锁的共享模式，所以两者相互排斥。这个范围是合作式
+持有同一旧锁的共享模式，所以两者相互排斥。两种范围都是合作式
 `local_serialized`，不代表系统级独占。该调用器只适用于具有此现有 owner 的节点；
 其他节点需使用自身已验证的 allocator。
 

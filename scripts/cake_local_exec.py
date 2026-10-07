@@ -24,6 +24,7 @@ def main():
     p.add_argument("--cake-source", required=True, type=Path)
     p.add_argument("--cake-commit", required=True)
     p.add_argument("--device", type=int, required=True)
+    p.add_argument("--lock-scope", choices=("user", "device"), default="user")
     p.add_argument("--receipt", type=Path, required=True)
     p.add_argument("command", nargs=argparse.REMAINDER)
     args = p.parse_args()
@@ -42,14 +43,22 @@ def main():
     sys.path.insert(0, str(source / "src"))
     from open_cake_ir.evaluation.local_broker import admit_local_job, observe_local_job
 
-    # Legacy user-scope admission also excludes newer device-scoped workers,
-    # which share the legacy lock. Do not substitute a private lock directory.
+    # Both scopes use the existing owner's namespace. Do not substitute a
+    # private lock directory or implement allocation policy in this adapter.
     if Path(tempfile.gettempdir()).resolve() != Path("/tmp").resolve():
         p.error("a private TMPDIR would split the existing broker namespace")
-    for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "MACA_VISIBLE_DEVICES"):
-        os.environ.pop(key, None)
-    os.environ["MACA_VISIBLE_DEVICES"] = str(args.device)
-    job = admit_local_job("maca")
+    if args.lock_scope == "device":
+        # The deployed owner selects the device mask and holds its locks across
+        # exec. An owner without this API must fail; never fall back to user scope.
+        job = admit_local_job("maca", device=args.device, lock_scope="device", queue_seconds=0)
+        lock_scope = "device"
+    else:
+        # Preserve the legacy API and mask behavior for existing owner revisions.
+        for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "MACA_VISIBLE_DEVICES"):
+            os.environ.pop(key, None)
+        os.environ["MACA_VISIBLE_DEVICES"] = str(args.device)
+        job = admit_local_job("maca")
+        lock_scope = "legacy user scope, shared with existing device-scope workers"
     if observe_local_job("maca") != job:
         raise RuntimeError("broker admission changed")
     receipt = {
@@ -58,7 +67,7 @@ def main():
         "broker_job_id": job,
         "broker_source_commit": args.cake_commit,
         "allocation": "local_serialized",
-        "lock_scope": "legacy user scope, shared with existing device-scope workers",
+        "lock_scope": lock_scope,
         "external_gpu_activity": "not_excluded",
         "physical_device": args.device,
         "logical_device": 0,

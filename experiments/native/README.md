@@ -33,6 +33,28 @@ By default, the authoritative cases.tsv plan contains 49 cases: copy with blocks
 1,048,573 outputs, block 256 and strides 1/2/4/8/16; empty one-block kernels
 with each block size.
 
+For the MXCC launch-bound investigation, compilation accepts
+`C550_COPY_LAUNCH_BOUND=0` (default, no annotation) or
+`C550_COPY_LAUNCH_BOUND=1024` (only `copy_kernel` receives the single-argument
+`__launch_bounds__(1024)` annotation). The script rejects every other value
+and passes the selected value explicitly as a compiler definition. For example:
+
+```sh
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 C550_COPY_LAUNCH_BOUND=1024 \
+  bash experiments/native/compile.sh /tmp/metax-native-probe-bound1024
+```
+
+This is an MXCC-specific experiment: compare the same copy function body and
+block-1024 plan with the default and annotated binaries. Input, oracle, warmup
+and timing protocol remain identical. It tests whether an explicit bound changes
+observed compilation, first-launch behavior or subsequent timing; it establishes
+no result before execution. No second annotation argument is used, and no CUDA
+second-argument semantics are assumed. Raw protocol records and checked reports
+retain `copy_launch_bound` as the actual integer compiler selection, not a
+hardware support guarantee. Older records without that field remain readable;
+their missing value is not backfilled from a guess. Gather and empty kernels
+retain their original declarations.
+
 The optional `prepare DIRECTORY --suite block-boundary` writes an 18-case
 CPU-only plan: copy with blocks 512/1024 at each length
 1/511/513/1023/1024/1025/4097/4194317, then empty kernels with blocks 512/1024.

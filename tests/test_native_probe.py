@@ -111,6 +111,20 @@ class NativeOracleTest(unittest.TestCase):
     def test_complete_records_accepted(self):
         self.assertEqual(len(probe.validate_records(self.records(), [self.case], 160)[self.case["id"]]), 10)
 
+    def test_copy_launch_bound_metadata_accepts_only_declared_variants(self):
+        for bound in (0, 1024):
+            records = self.records()
+            records[1]["copy_launch_bound"] = bound
+            with self.subTest(bound=bound):
+                self.assertEqual(len(probe.validate_records(records, [self.case], 160)[self.case["id"]]), 10)
+
+    def test_invalid_copy_launch_bound_metadata_is_refused(self):
+        for bound in (None, False, True, 0.0, 1024.0, "0", "1024", -1, 512, 1025, 2048):
+            records = self.records()
+            records[1]["copy_launch_bound"] = bound
+            with self.subTest(bound=bound), self.assertRaisesRegex(ValueError, "Invalid copy_launch_bound"):
+                probe.validate_records(records, [self.case], 160)
+
     def first_launch_records(self):
         records = self.records()
         records[1].update(record_first_launch=True, additional_launches_per_case=1,

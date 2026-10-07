@@ -180,6 +180,10 @@ def validate_records(records: list[dict], cases: list[dict], input_elements: int
         raise ValueError("Expected exactly one visible MetaX C550")
     if type(device.get("wave_size_api")) is not int or device["wave_size_api"] <= 0:
         raise ValueError("Missing or invalid device wave size")
+    if "copy_launch_bound" in protocol:
+        value = protocol["copy_launch_bound"]
+        if type(value) is not int or value not in (0, 1024):
+            raise ValueError("Invalid copy_launch_bound protocol field")
     record_first_launch = protocol.get("record_first_launch", False)
     additional_launches = protocol.get("additional_launches_per_case", 0)
     if (type(record_first_launch) is not bool
@@ -294,6 +298,9 @@ def check(input_directory: Path, output_directory: Path) -> dict:
         "throughput_scope": "logical GB/s in decimal units, not DRAM bandwidth",
         "cases": summaries,
     }
+    protocol = next(r for r in records if r["type"] == "protocol")
+    if "copy_launch_bound" in protocol:
+        result["copy_launch_bound"] = protocol["copy_launch_bound"]
     if first_launches:
         result["first_launch_timing_scope"] = (
             "one additional launch per case before the 20 warmups; host monotonic clock around "

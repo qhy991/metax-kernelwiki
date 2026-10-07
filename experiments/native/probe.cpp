@@ -13,6 +13,13 @@
 #include <string>
 #include <vector>
 
+#ifndef C550_COPY_LAUNCH_BOUND
+#define C550_COPY_LAUNCH_BOUND 0
+#endif
+#if C550_COPY_LAUNCH_BOUND != 0 && C550_COPY_LAUNCH_BOUND != 1024
+#error "C550_COPY_LAUNCH_BOUND must be 0 or 1024"
+#endif
+
 namespace {
 constexpr uint64_t kInputElements = 1ULL << 24;  // 64 MiB, exact float indices.
 constexpr uint64_t kGuardElements = 32;
@@ -85,7 +92,12 @@ std::vector<Case> read_plan(const std::string& directory) {
     return cases;
 }
 
-__global__ void copy_kernel(const float* __restrict__ input, float* __restrict__ output, uint64_t n) {
+#if C550_COPY_LAUNCH_BOUND == 1024
+__global__ __launch_bounds__(1024)
+#else
+__global__
+#endif
+void copy_kernel(const float* __restrict__ input, float* __restrict__ output, uint64_t n) {
     const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n) output[i] = input[i];
 }
@@ -148,6 +160,7 @@ void run(const std::string& input_directory, const std::string& output_directory
             << ",\"max_threads_per_block\":" << property.maxThreadsPerBlock << "}\n";
     records << "{\"type\":\"protocol\",\"schema_version\":1,\"input_elements\":" << kInputElements
             << ",\"guard_elements_each_side\":" << kGuardElements
+            << ",\"copy_launch_bound\":" << C550_COPY_LAUNCH_BOUND
             << ",\"dtype\":\"float32\",\"timer\":\"mcEventElapsedTime\","
                "\"timed_scope\":\"default-stream event interval around a batch; includes device idle gaps from host submission\","
                "\"cache_policy\":\"repeated addresses; no explicit application cache reset; runtime cache policy unverified\","

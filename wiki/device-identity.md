@@ -10,7 +10,7 @@
 | MACA capability | MACA runtime 的 major/minor | 编译本机 SDK 属性查询 |
 | Triton architecture | 后端 API 用来选择编译路线的值 | 安装版本的 driver/compiler 源码与实际 metadata |
 
-已有 [open-cake-ir 调查](https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md) 曾在 C550 上分别观察到 `XCORE1002`、`xcore1000`、native capability `10.2`。这些是历史外部观察；本库会保留自己的采集日期、SDK 与设备，而不把历史值当作新一次实测。
+已有 [open-cake-ir 调查](https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md) 曾在 C550 上分别观察到 `XCORE1002`、`xcore1000`、native capability `10.2`。这些是历史外部观察。本库的 [20261007-native-01](../data/results/20261007-native-01.json) 在 MACA 3.5.3.18、驱动 3.6.11 上独立查询并运行了 C550；device ISA 与编译 family 分别记录。
 
 ## wave 宽度影响什么
 
@@ -23,3 +23,9 @@
 ## 头文件别名不等于两个独立观察
 
 MACA 3.5.3 的头文件检查发现 `mc_runtime_api.h` 有 `#define waveSize warpSize`，而类型定义中包含两个名称。源码打印两次名称可能读取同一字段。属性查询应以 SDK 枚举编译并逐项检查返回码；记录它们来自同一运行时，不能把两个相等结果称为相互独立的硬件验证。
+
+## 本次 runtime 观察（2026-10-07）
+
+设备运行要求恰好一张可见卡，且 runtime 名称严格等于 `MetaX C550`。所选卡报告 wave 宽度 64、104 个 multiprocessor、每 block 最大 1024 线程、每 multiprocessor 最大 2048 线程、每 block shared memory 65536 bytes、L2 8388608 bytes。上述数值是 API 观察，不是占用率标定。原始字段见[结果记录](../data/results/20261007-native-01.json)。
+
+`mx-smi` 报板卡显存 65536 MiB；本次 `mcDeviceProp_t.totalGlobalMem` 返回 68283269120 bytes，即 63.59375 GiB。两个接口的数值各自保留，不把它们混成“可分配 64 GiB”，也未实测最大可分配容量。

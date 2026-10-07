@@ -14,7 +14,7 @@ xcore1000 as its internal target while the device reports XCORE1002; preserve
 that distinction in the run record.
 
 1. python3 experiments/native/native_probe.py prepare /tmp/metax-native-input
-2. C550_ARCH=xcore1000 bash experiments/native/compile.sh /tmp/metax-native-probe
+2. MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 bash experiments/native/compile.sh /tmp/metax-native-probe
 3. mkdir /tmp/metax-native-output
 4. Acquire and bind exactly one C550 using the installed gpu-infra skill.
 5. /tmp/metax-native-probe --run /tmp/metax-native-input /tmp/metax-native-output
@@ -80,3 +80,19 @@ Run python3 -m unittest discover -s tests -p test_native_probe.py. These tests
 check corrupted input, wrong indices, nonfinite payloads, guard writes, missing
 or duplicate timing samples and metadata mismatch on synthetic CPU fixtures.
 They do not compile MACA C++ or prove GPU correctness.
+
+## 已验证的现有本机分配入口
+
+本库提供 `scripts/cake_local_exec.py` 作为已有 Cake MACA local broker 的薄调用器。
+它要求明确的 allocator checkout、完整 commit、物理 device 和新的 receipt 路径；
+验证原 owner 的源码未修改后调用其 `admit_local_job`，再 exec 原生程序。
+没有自行创建锁协议，也没有在 broker 不可用时直接运行的 fallback。
+
+在本次节点，该旧版用户级锁排斥所有遵循同一 namespace 的作业；新设备级作业
+持有同一旧锁的共享模式，所以两者相互排斥。这个范围是合作式
+`local_serialized`，不代表系统级独占。该调用器只适用于具有此现有 owner 的节点；
+其他节点需使用自身已验证的 allocator。
+
+执行时给 wrapper 外加进程超时。其继承的文件描述符随原生进程退出释放，
+所有 device 操作结束、输出落盘之后再在主机上运行 `check`。返回 0 与
+正确性通过分别检查；profile 工具还必须验证实际 GPU event，而非仅看退出码。

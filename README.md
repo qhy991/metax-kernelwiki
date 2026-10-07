@@ -15,6 +15,10 @@
 | 重现实验 | [原生探针](experiments/native/README.md) |
 | 查参考库和来源边界 | [来源沿革](docs/provenance.md) |
 
+## 当前实测范围
+
+首轮已在 C550 / MACA 3.5.3.18 完成 **49 个 case**，逐位检查 **22,042,413 个有效输出**及边界 guard。公开记录保存全部 **490 个计时批次**；四进程平衡顺序确认和含 1020 个 GPU kernel 的独立 trace 也已完成。缓存策略、时钟、导出时间单位及并发覆盖限制见[研究进展](docs/research-log.md)。
+
 ## 检索
 
 Python 标准库即可，无需 GPU 或网络：

@@ -5,32 +5,101 @@
     {
       "id": "c550-device-identity",
       "title": "产品、设备 ISA、编译 family 与兼容架构值",
-      "tags": ["C550", "xcore1002", "xcore1000", "identity", "wave"],
-      "confidence": "source-reported",
-      "evidence_scope": "external-observation",
+      "tags": [
+        "C550",
+        "xcore1002",
+        "xcore1000",
+        "identity",
+        "wave"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "local-measurement",
       "path": "wiki/device-identity.md",
-      "sources": ["https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md"],
-      "limitations": "历史调查与本机头文件观察；不构成此仓库的 kernel 性能验证。"
+      "sources": [
+        "https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md",
+        "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
+      ],
+      "limitations": "一张C550的runtime/ISA观察；waveSize与warpSize为同一别名来源，不构成占用率、最大可分配显存或跨产品保证。",
+      "result": "data/results/20261007-native-01.json"
     },
     {
       "id": "maca-toolchain",
       "title": "MACA C++ 和 mcTriton 编译路线",
-      "tags": ["mxcc", "mcfatbin", "triton", "compiler", "MACA"],
+      "tags": [
+        "mxcc",
+        "mcfatbin",
+        "triton",
+        "compiler",
+        "MACA"
+      ],
       "confidence": "documented",
       "evidence_scope": "upstream-source",
       "path": "docs/toolchain.md",
-      "sources": ["https://github.com/MetaX-MACA/mcTriton"],
+      "sources": [
+        "https://github.com/MetaX-MACA/mcTriton"
+      ],
       "limitations": "上游版本与宿主安装版本分别记录；源码选项不等于 C550 性能结论。"
     },
     {
       "id": "maca-event-timing",
       "title": "事件批次计时、逻辑带宽与测量边界",
-      "tags": ["timing", "event", "bandwidth", "cache", "measurement"],
+      "tags": [
+        "timing",
+        "event",
+        "bandwidth",
+        "cache",
+        "measurement"
+      ],
       "confidence": "experimental",
       "evidence_scope": "protocol",
       "path": "docs/methodology.md",
-      "sources": ["https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html"],
+      "sources": [
+        "https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html"
+      ],
       "limitations": "探针协议；未验证运行时缓存策略的事件区间不是 DRAM 峰值带宽或纯 launch latency。"
+    },
+    {
+      "id": "c550-native-memory-probes",
+      "title": "C550 copy 配置的四进程确认与 stride 首轮观察",
+      "tags": [
+        "copy",
+        "gather",
+        "stride",
+        "block",
+        "尾部",
+        "访存",
+        "性能",
+        "C550"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "local-measurement",
+      "path": "wiki/memory-access.md",
+      "sources": [
+        "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
+      ],
+      "result": "data/results/20261007-copy-confirm.json",
+      "limitations": "copy比值仅覆盖固定规模和四个进程；gather仅单轮扫描；运行时缓存策略未验证，logical GB/s不是DRAM带宽。"
+    },
+    {
+      "id": "maca-trace-acceptance",
+      "title": "mcTracer 退出码陷阱、kernel 事件与未验证的导出时间单位",
+      "tags": [
+        "mcTracer",
+        "profiler",
+        "trace",
+        "registers",
+        "measurement",
+        "计时",
+        "资源"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "local-measurement",
+      "path": "wiki/profiling.md",
+      "sources": [
+        "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
+      ],
+      "result": "data/results/20261007-trace-02.json",
+      "limitations": "仅本版本trace；原始单位未独立验证，不换算为已校准的kernel微秒；没有缓存或DRAM性能计数器。"
     }
   ]
 }

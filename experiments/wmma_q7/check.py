@@ -171,10 +171,9 @@ def analyze_output(words: list[int]) -> dict:
                 mismatches=mismatches, guards_intact=not guards, guard_elements_checked=128, guard_mismatches=guards)
 
 
-def check(directory: Path) -> dict:
-    records = [json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
-               for line in (directory / "raw.jsonl").read_text().splitlines()]
-    order = validate_metadata(records)
+def analyze_files(directory: Path, order: str) -> dict:
+    """Check shared fixed-q7 files after the caller validates its own protocol."""
+    require(type(order) is str and order in ORDERS, "Unsupported file-analysis order")
     fixed = fixed_inputs()
     prepared = {op: read_words(directory / f"prepared.{op}.f16", 1024, 2) for op in ("a", "b")}
     inputs = {op: compare_words(prepared[op], fixed[op]) for op in ("a", "b")}
@@ -191,13 +190,20 @@ def check(directory: Path) -> dict:
                          for phase in snapshots.values() for row in phase.values())
                  and all(row["guards_intact"] for row in variants.values()))
     numeric = all(row["exact_passed"] for row in variants.values())
-    return dict(schema=SCHEMA, status="integrity_failed" if not integrity else "numeric_failed" if not numeric else "pass",
+    return dict(status="integrity_failed" if not integrity else "numeric_failed" if not numeric else "pass",
                 passed=integrity and numeric, structural_valid=True, integrity_passed=integrity, numeric_passed=numeric,
                 order=order, prepared_inputs=inputs, snapshots=snapshots, variants=variants,
                 prepared_input_halfwords_checked=2048, input_snapshot_halfwords_checked=6144,
                 payload_elements_checked=512, guard_elements_checked=256,
                 reference="independent Fraction arithmetic: (-7/16)*(-1/16)+(1/16)*(-8/16)=-1/256 at C00; other 255 outputs zero",
                 input_observation_scope="before/between/after capture boundaries only; not transient values inside a kernel")
+
+
+def check(directory: Path) -> dict:
+    records = [json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
+               for line in (directory / "raw.jsonl").read_text().splitlines()]
+    order = validate_metadata(records)
+    return dict(schema=SCHEMA, **analyze_files(directory, order))
 
 
 def main() -> int:

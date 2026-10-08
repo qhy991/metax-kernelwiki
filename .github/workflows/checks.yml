@@ -22,3 +22,5 @@ jobs:
           bash -n experiments/transpose/compile.sh
           bash -n experiments/wave_collectives/compile.sh
           bash -n experiments/wmma/compile.sh
+          bash -n experiments/wmma_q7/compile.sh
+          bash -n experiments/wmma_module/compile.sh

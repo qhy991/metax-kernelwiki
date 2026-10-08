@@ -124,6 +124,30 @@
       ],
       "result": "data/results/20261007-launch-bound-control.json",
       "limitations": "特定C550/MXCC上的copy；首次host区间各一个新进程样本，不是泛化加速比；重编译标志是descriptor属性，缺失项不是false。"
+    },
+    {
+      "id": "c550-fixed-address-memory-order",
+      "title": "固定地址集合后，C550 读取排列的非单调时间与六进程复验",
+      "tags": [
+        "memory",
+        "order",
+        "permutation",
+        "transpose",
+        "gather",
+        "stride",
+        "访问次序",
+        "访存",
+        "转置",
+        "C550"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "local-measurement",
+      "path": "wiki/memory-order.md",
+      "sources": [
+        "https://github.com/qhy991/metax-kernelwiki/tree/0e093ced80c1c0963186e317fe579cbfd7ae4a41"
+      ],
+      "result": "data/results/20261008-memory-order.json",
+      "limitations": "不同shift对应不同输出排列；固定整体跨度仍不固定短期复用窗口。六进程仅覆盖一张C550，不能唯一归因缓存/TLB/事务组织或当作原算子加速。"
     }
   ]
 }

@@ -371,8 +371,8 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 `C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
-the successor mode `2` selects only the separate product suite below. Both
-nonzero modes require paired control and prefix mode zero; the compile script
+successor modes `2` and `3` select only the separate product and sign suites
+below. All nonzero modes require paired control and prefix mode zero; the compile script
 and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). The suite must be `witness-control`. The input-rule identifiers
@@ -441,11 +441,11 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-product-probe
 ```
 
-The compile flag is now the closed enum `0|1|2`: zero preserves the original
-non-pattern modes, one admits only `witness-control`, and two admits only
-`product-control`. Mode 2 is a deliberate successor contract; it is not an
+The compile flag is the closed enum `0|1|2|3`: zero preserves the original
+non-pattern modes, one admits only `witness-control`, two admits only
+`product-control`, and three admits only `sign-control` below. Mode 2 is a deliberate successor contract; it is not an
 extension to the patterns accepted by mode 1. Values outside that enum fail
-before compilation. Modes 1 and 2 require `C550_WMMA_CONTROL=1` and
+before compilation. Modes 1, 2 and 3 require `C550_WMMA_CONTROL=1` and
 `C550_WMMA_PREFIX=0`.
 
 Products reuse the witness TSV column names, but `suite=product-control` and
@@ -487,3 +487,84 @@ and suite isolation, misplaced or additional support, unannounced slot swaps,
 positive-zero padding, missing and type-invalid nested metadata, complete mixed
 numerical failures, snapshots and guards. Its synthetic CPU data provides no
 C550 product-suite result.
+
+## Explicit product-sign suite
+
+`prepare --suite sign-control` admits eight fixed patterns at logical
+`M=N=16, K=2`, all targeting `C[0,0]`. Only A row 0 and B column 0 contain the
+listed numerator pairs, scaled by 1/16 before FP16 packing. Every other input
+word is positive zero. The independent integer oracle divides the target
+numerator by 256 and requires all other 255 outputs to be finite numerical zero.
+
+| Pattern | A numerators at K0, K1 | B numerators at K0, K1 | C00 numerator | Matching earlier product pattern |
+| --- | --- | --- | --- | --- |
+| `positive12-k0` | `[-12, 0]` | `[-1, 0]` | `12` | `positive-k0` |
+| `negative12-k0` | `[12, 0]` | `[-1, 0]` | `-12` | None |
+| `positive13-k1` | `[0, -1]` | `[0, -13]` | `13` | None |
+| `negative13-k1` | `[0, 1]` | `[0, -13]` | `-13` | `negative-k1` |
+| `pair-pp` | `[-12, -1]` | `[-1, -13]` | `25` | None |
+| `pair-pn` | `[-12, 1]` | `[-1, -13]` | `-1` | `pair-forward` |
+| `pair-np` | `[12, -1]` | `[-1, -13]` | `1` | None |
+| `pair-nn` | `[12, 1]` | `[-1, -13]` | `-25` | None |
+
+The four paired cases change A's signs while keeping the complete B input
+fixed. Each standalone control zeros **both** operands at the inactive K slot.
+Thus the three named earlier patterns have the same complete packed inputs;
+they are known baselines, not novel input conditions. Matching the declared
+operands does not imply unchanged device outputs or binaries.
+
+The factorization is part of this contract. Moving a sign from A to B while
+preserving its mathematical product changes the input pattern and is refused.
+These conditions study specified sign combinations and magnitudes in two
+logical K slots. They do not prescribe or identify native accumulation order,
+instruction selection, rounding mechanism, or a hardware-versus-compiler cause.
+Standalone component observations remain separate from the combined operation.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-sign-input \
+  --suite sign-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=3 \
+  bash experiments/wmma/compile.sh /tmp/wmma-sign-probe
+```
+
+Mode 3 is an explicit successor contract and admits only `sign-control` with
+`input_rule=isolated-signed-products`. Mode 4 is invalid. Existing modes 0, 1
+and 2 retain their own suite and pattern admission. The TSV uses the existing
+pattern columns; shared column names do not permit cross-suite rows. Sign
+plans contain one to eight distinct patterns. The ninth row is refused before
+reading its input files. The table order is the default; both kernel orders,
+explicit case reordering and subsets are supported. A subset does not prove
+coverage of all sign combinations.
+
+The oracle and raw protocol use experiment `wmma-scalar-fp32-sign-control`.
+The protocol declares `witness_mode=3`, `sign_patterns`, the fixed paired B,
+the standalone inactive-slot policy and the eight-case bound. Logical-case,
+variant and snapshot records retain all ordered-pair metadata and add:
+
+- `product_signs`: integer -1, 0 or +1 at each declared K slot;
+- `product_magnitudes`: absolute integer product numerators at those slots;
+- `matching_product_pattern`: one of the three earlier pattern names above,
+  or an explicit JSON null for the other five patterns.
+
+The nullable field is required; omitting it is not equivalent to a declared
+null. Nested vectors remain type-sensitive, so Boolean and floating-point
+substitutions for integer metadata are refused. These sign-specific fields are
+not added to old product or witness records. The product and sign suites share
+the host-side ordered-pair parser, packing and metadata implementation, with
+separate closed contract tables.
+
+Both device kernel bodies and the launch body remain unchanged. The same full
+physical tile, one padded K16 chunk, shared A/B allocations, separate guarded
+C buffers, three full input snapshots and exact finite numerical oracle apply.
+One complete eight-pattern order checks 4,096 payload words, 2,048 guards,
+16,384 prepared halfwords and 49,152 snapshot halfwords. It retains 160 timed
+batches and executes 1,760 kernel launches including warmups. No numerical
+failure becomes a pass through tolerance, and timings remain descriptive with
+`performance_accepted=false`.
+
+`tests/test_wmma_signs.py` checks exact vectors and baselines, fixed
+factorization, signs and magnitudes, positive-zero inputs, all physical outputs,
+explicit null and deep typed metadata, guards, snapshots, mode boundaries and
+complete mixed-failure diagnostics. These CPU tests use synthetic outputs and
+establish no new device result.

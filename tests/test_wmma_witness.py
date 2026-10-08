@@ -252,7 +252,7 @@ class WmmaWitnessTest(unittest.TestCase):
             base=dict(os.environ,MXCC=str(stub),C550_ARCH='xcore1000')
             for key in ('C550_WMMA_CONTROL','C550_WMMA_PREFIX','C550_WMMA_WITNESS'):base.pop(key,None)
             cases=[(None,None,None,True),('0','0','0',True),('1','0','0',True),('1','1','0',True),('1','0','1',True),
-                   ('0','0','1',False),('1','1','1',False),('1','0','2',True),('1','0','3',False),('1','0','',False),('1','0','true',False)]
+                   ('0','0','1',False),('1','1','1',False),('1','0','2',True),('1','0','3',True),('1','0','4',False),('1','0','',False),('1','0','true',False)]
             for control,prefix,witness,accepted in cases:
                 env=dict(base)
                 for key,value in zip(('C550_WMMA_CONTROL','C550_WMMA_PREFIX','C550_WMMA_WITNESS'),(control,prefix,witness)):

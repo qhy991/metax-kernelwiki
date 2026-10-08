@@ -163,8 +163,18 @@ Two eight-case sweeps in opposite orders and eight preselected traces retain 24 
 
 [Sign-configuration evidence](../wiki/wmma-exactness.md#successor-fixed-magnitude-sign-configurations) · [All retained words and batches](../data/results/20261008-wmma-signs.json). Five auxiliary suites contribute 67 logical cases and 122 matrices, all matching prior buffers. The three explicitly input-matched primary conditions add 18 matching historical variant comparisons. Overall: 91 logical cases, 170 matrices and 1,700 batches; scalar 79/79 exact, WMMA 36/91 exact with 815 unequal elements. Correctness remains failed and performance unaccepted. All 15 workers and eight profiled applications exited and passed release checks; no promotion to open-cake-ir.
 
+## 2026-10-08: Adjacent product magnitudes at a fixed result
+
+Source `9b6c28c` adds mode 4 for a closed 42-condition magnitude contract: every integer q from 1 through 14, each with positive, negative and paired roles. All hold M=N=16,K=2,C00 fixed. Paired A=[-q,1]/16 and B=[-1,-(q+1)]/16 give exact sum -1/256; component cases zero both operands of the inactive term. Kernel and launch bodies remain unchanged. The frozen source passed 163 CPU checks, seven native builds, 26 input/format negatives and three incompatible-mode negatives.
+
+Two complete sweeps use opposite case/implementation orders. Both standalone components are exact at every q. Paired WMMA is exact at q1–6 and has only C00 unequal at q7–14, always `0xbb800001` versus exact `0xbb800000`, with signed residual -2^-31. All scalar matrices are exact, other primary outputs are zero, snapshots agree and guards remain intact. The fixed final reference does not identify this response: product magnitudes, cancellation severity and operand encodings change together. The first observed paired mismatch at q7 applies only to the declared grid and factorization.
+
+Only three preselected pair conditions have primary traces: q1, q12 and q14. Their buffers match both sweeps; no standalone or q6/q7 boundary trace is claimed. [Full grid and interpretation](../wiki/wmma-exactness.md#successor-adjacent-product-magnitudes-at-a-fixed-result) · [All retained words and batches](../data/results/20261008-wmma-magnitudes.json). Primary coverage is 87 logical cases and 174 matrices: WMMA 69/87 exact with 18 mismatches, scalar 87/87 exact. Six auxiliary suites contribute 75 logical cases and 138 matrices. All 138 auxiliary and 14 input-matched q12 historical comparisons agree.
+
+Overall: 162 logical cases, 312 matrices and 3,120 batches; scalar 150/150 exact, WMMA 93/162 exact with 829 unequal elements. Numerical acceptance remains failed and performance unaccepted. All 11 workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
 ## Next questions
 
-- Compare neighboring pairs `(11,-12)`, `(12,-13)` and `(13,-14)` at fixed result -1/256, with matched components and the same isolated tile. The middle pair is a known baseline; the complete magnitude comparison is unmeasured. Product-preserving sign transfers remain a separate input question.
+- Test exact power-of-two scaling of A at selected q values around the observed q6/q7 transition and the existing q12 baseline, with matched components and a successor dyadic input contract. This proposed comparison preserves relative cancellation while changing absolute scale; it has not been executed. Product-preserving factor/sign transfers remain a separate input question.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

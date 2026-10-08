@@ -212,7 +212,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA exactness: fixed-magnitude signs and two negative residuals",
+      "title": "C550 WMMA exactness: adjacent product magnitudes at a fixed result",
       "tags": [
         "WMMA",
         "matrix",
@@ -240,7 +240,10 @@
         "component controls",
         "sign configuration",
         "cancellation",
-        "signed residual"
+        "signed residual",
+        "product magnitude",
+        "fixed result",
+        "finite grid"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -252,10 +255,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/0cddd51024fcf00ef9dea2975ac050fd567f9507",
         "https://github.com/qhy991/metax-kernelwiki/tree/6fd66b9e6a5ca6794bd233b5a8190aba166d0941",
         "https://github.com/qhy991/metax-kernelwiki/tree/7b8ee81f3a94dd5906f892408df2fb7086ee69a3",
-        "https://github.com/qhy991/metax-kernelwiki/tree/d1e1be94cdbada03039494c3b5483439cda25791"
+        "https://github.com/qhy991/metax-kernelwiki/tree/d1e1be94cdbada03039494c3b5483439cda25791",
+        "https://github.com/qhy991/metax-kernelwiki/tree/9b6c28c9e700b3183cd2febb2a684c52844a3bd7"
       ],
-      "result": "data/results/20261008-wmma-signs.json",
-      "limitations": "For fixed product magnitudes 12/256 and 13/256 and the declared A/B factorization, standalone and same-sign cases are exact; both mixed-sign cases have signed residual -2^-31. This does not establish general mixed-sign failure, a rounding mode, sign-placement invariance or a unique hardware cause. Timings are not accepted as performance."
+      "result": "data/results/20261008-wmma-magnitudes.json",
+      "limitations": "For paired products (q, -(q+1))/256 in the declared factorization, every integer q1–6 is exact and q7–14 has one C00 residual of -2^-31, despite a fixed exact sum -1/256. Both components and all scalar controls are exact. This finite grid establishes no universal threshold, internal precision or unique hardware cause. Only q1/q12/q14 pairs have primary traces; timings are not accepted as performance."
     }
   ]
 }

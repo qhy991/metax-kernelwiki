@@ -24,3 +24,4 @@ jobs:
           bash -n experiments/wmma/compile.sh
           bash -n experiments/wmma_q7/compile.sh
           bash -n experiments/wmma_module/compile.sh
+          bash -n experiments/mcrtc_format/compile.sh

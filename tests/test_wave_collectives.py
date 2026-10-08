@@ -1,11 +1,14 @@
 """Host tests for complete physical-wave outputs; no GPU intrinsic execution."""
 import array
+import copy
 import csv
 import importlib.util
 import json
 from pathlib import Path
 import tempfile
 import unittest
+import os
+import subprocess
 
 SPEC = importlib.util.spec_from_file_location(
     "wave_collectives", Path(__file__).resolve().parents[1] / "experiments/wave_collectives/experiment.py")
@@ -118,19 +121,26 @@ class WaveCollectivesTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     probe.read_plan(self.write_plan(directory, [case(block,n)]))
 
-    def records(self, c):
-        return [
+    def records(self, c, suite="default"):
+        records = [
             dict(type="device", name="MetaX C550", visible_device_count=1, wave_size_api=64,
                  pci_bus_id="0000:01:00.0", runtime_version_api=1, driver_version_api=1),
             dict(type="protocol", schema_version=1, experiment=probe.EXPERIMENT, input_elements=128,
                  dtype="int32", guard_elements_each_side=32, timer="mcEventElapsedTime", required_wave_size=64,
                  mask_hex=probe.MASK_HEX, mask_bits=64, channels=list(probe.CHANNELS), participation="all physical threads",
                  **{field: None for field in probe.ENVIRONMENT}),
-            dict(type="case", id=c["id"], **probe.case_metadata(c), function_attributes_before_timing=dict(
+            dict(type="case", id=c["id"], **probe.case_metadata(c, suite), function_attributes_before_timing=dict(
                  maxThreadsPerBlock=512,numRegs=16,sharedSizeBytes=0,localSizeBytes=0)),
             *[dict(type="sample", id=c["id"], sample=i, event_batch_ms=0.1,host_enqueue_batch_us=50.0) for i in range(10)],
             dict(type="complete",cases=1,cpu_correctness_checked=False),
         ]
+        if suite == "mask-types":
+            records[1].pop("mask_hex")
+            records[1].pop("mask_bits")
+            records[1].update(experiment=probe.MASK_TYPE_EXPERIMENT, channels=list(probe.MASK_TYPE_CHANNELS),
+                              channel_contracts=probe.mask_type_contracts(), mask_types_mode=1,
+                              group_width_scope=probe.GROUP_WIDTH_SCOPE)
+        return records
 
     def test_correct_records_accepted_and_wave32_device_refused(self):
         c = case(128, 97)
@@ -190,6 +200,136 @@ class WaveCollectivesTest(unittest.TestCase):
             self.assertEqual(checked["status"],"pass")
             self.assertEqual(checked["cases"][0]["physical_threads_checked"],128)
             self.assertEqual(checked["cases"][0]["zero_outputs_checked"],1152)
+
+    def test_mask_types_exact_groups_for_both_physical_waves_and_logical_tails(self):
+        expected = probe.reference_output(case(128,128),self.source,"mask-types")
+        for thread, values in ((0,[2080,528]),(32,[2080,1552]),(64,[6176,2576]),(96,[6176,3600])):
+            self.assertEqual(expected[thread*2:(thread+1)*2],values)
+        tail = probe.reference_output(case(128,97),self.source,"mask-types")
+        self.assertEqual(tail[96*2:97*2],[2673,97])
+        self.assertEqual(tail[127*2:128*2],[2673,97])
+        tail = probe.reference_output(case(128,65),self.source,"mask-types")
+        self.assertEqual(tail[96*2:97*2],[65,0])
+        cases = probe.mask_type_cases()
+        self.assertEqual(len(cases),20)
+        self.assertTrue(all(c["id"].startswith("mask_types_") for c in cases))
+        for c in cases:
+            expected = probe.reference_output(c,self.source,"mask-types")
+            checked = probe.validate_output(c,self.source,guarded(expected),"mask-types")
+            self.assertEqual(checked["payload_elements_checked"],c["block"]*2)
+            self.assertEqual(checked["physical_threads_checked"],c["block"])
+        self.assertEqual(probe.reference_output(case(128,0),self.source,"mask-types"),[0]*256)
+
+    def test_mask_types_swapped_channels_wrong_groups_and_lost_upper_halves_fail(self):
+        c = case(128,128)
+        expected = probe.reference_output(c,self.source,"mask-types")
+        for mutation in ("swapped","wave_sum_for_half","whole_block","lost_upper_half","unwritten"):
+            payload = expected[:]
+            if mutation == "swapped":
+                for thread in range(128):
+                    payload[thread*2],payload[thread*2+1] = payload[thread*2+1],payload[thread*2]
+            elif mutation == "wave_sum_for_half":
+                for thread in range(128):
+                    payload[thread*2+1] = payload[thread*2]
+            elif mutation == "whole_block":
+                payload = [8256]*256
+            elif mutation == "lost_upper_half":
+                for thread in (*range(32,64),*range(96,128)):
+                    payload[thread*2+1] = 0
+            else:
+                payload[-1] = probe.GUARD_WORD
+            with self.subTest(mutation=mutation),self.assertRaisesRegex(ValueError,"mismatches"):
+                probe.validate_output(c,self.source,guarded(payload),"mask-types")
+        c = case(128,0)
+        payload = [0]*256
+        payload[-1] = 128
+        with self.assertRaisesRegex(ValueError,"mismatches"):
+            probe.validate_output(c,self.source,guarded(payload),"mask-types")
+
+    def test_mask_types_channel_metadata_is_typed_exact_and_not_one_common_mask(self):
+        c = case(128,97)
+        self.assertEqual(len(probe.validate_records(self.records(c,"mask-types"),[c],"mask-types")[c["id"]]),10)
+        for record_index in (1,2):
+            for channel in (0,1):
+                for field in ("channel","mask_type","mask_hex","mask_bits","group_width"):
+                    for missing in (False,True):
+                        records = self.records(c,"mask-types")
+                        contract = records[record_index]["channel_contracts"][channel]
+                        if missing:
+                            contract.pop(field)
+                        else:
+                            contract[field] = "unsigned long" if field=="mask_type" and channel==1 else "invalid"
+                        with self.subTest(record=record_index,channel=channel,field=field,missing=missing),self.assertRaisesRegex(ValueError,"mask type contract"):
+                            probe.validate_records(records,[c],"mask-types")
+            records = self.records(c,"mask-types")
+            records[record_index]["channel_contracts"][1]["channel"] = True
+            with self.assertRaisesRegex(ValueError,"mask type contract"):
+                probe.validate_records(records,[c],"mask-types")
+            records = self.records(c,"mask-types")
+            records[record_index]["mask_hex"] = probe.MASK_HEX
+            with self.assertRaisesRegex(ValueError,"single mask"):
+                probe.validate_records(records,[c],"mask-types")
+        records = self.records(c,"mask-types")
+        records[1]["group_width_scope"] = "measured physical width"
+        with self.assertRaisesRegex(ValueError,"Protocol metadata mismatch"):
+            probe.validate_records(records,[c],"mask-types")
+        with self.assertRaises(ValueError):
+            probe.validate_records(self.records(c),[c],"mask-types")
+        with self.assertRaises(ValueError):
+            probe.validate_records(self.records(c,"mask-types"),[c])
+
+    def test_only_exact_oracle_contracts_select_a_suite(self):
+        for suite in ("default","mask-types"):
+            metadata = probe.oracle_metadata(suite)
+            self.assertEqual(probe.infer_suite(metadata),suite)
+            for mutation in ("unknown","extra","schema_bool","swapped"):
+                modified = copy.deepcopy(metadata)
+                if mutation == "unknown": modified["experiment"] = "unknown"
+                elif mutation == "extra": modified["new_mask_mode"] = True
+                elif mutation == "schema_bool": modified["schema_version"] = True
+                else: modified["channels"] = list(reversed(modified["channels"]))
+                with self.subTest(suite=suite,mutation=mutation),self.assertRaisesRegex(ValueError,"Unsupported oracle"):
+                    probe.infer_suite(modified)
+
+    def test_mask_types_prepare_and_file_checker_keep_observed_two_channel_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inputs,outputs = Path(directory)/"input",Path(directory)/"output"
+            prepared = probe.prepare(inputs,"mask-types")
+            self.assertEqual(prepared["cases"],20)
+            oracle = json.loads((inputs/"oracle.json").read_text())
+            self.assertEqual(probe.infer_suite(oracle),"mask-types")
+            self.assertNotIn("mask_hex",oracle)
+            c = next(c for c in probe.mask_type_cases() if (c["block"],c["n"])==(128,128))
+            self.write_plan(inputs,[c])
+            outputs.mkdir()
+            # Explicit observations for a synthetic file fixture, not a device result.
+            payload = [value for pair in ([2080,528],)*32+([2080,1552],)*32+([6176,2576],)*32+([6176,3600],)*32 for value in pair]
+            with (outputs/(c["id"]+".i32")).open("wb") as handle:
+                guarded(payload).tofile(handle)
+            (outputs/"raw.jsonl").write_text("".join(json.dumps(record)+"\n" for record in self.records(c,"mask-types")))
+            checked = probe.check(inputs,outputs)
+            self.assertEqual(checked["experiment"],probe.MASK_TYPE_EXPERIMENT)
+            self.assertEqual(checked["cases"][0]["payload_elements_checked"],256)
+            self.assertEqual(checked["cases"][0]["channel_contracts"],probe.mask_type_contracts())
+
+    def test_compile_flag_admits_only_zero_or_one_before_compiler_invocation(self):
+        script = Path(__file__).resolve().parents[1]/"experiments/wave_collectives/compile.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            stub = Path(directory)/"mxcc-stub"
+            stub.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+            stub.chmod(0o700)
+            base = dict(os.environ,MXCC=str(stub),C550_ARCH="xcore1000")
+            base.pop("C550_WAVE_MASK_TYPES",None)
+            for value in (None,"0","1","","2","true","1.0"):
+                env = dict(base)
+                if value is not None: env["C550_WAVE_MASK_TYPES"] = value
+                result = subprocess.run(["bash",str(script),str(Path(directory)/"out")],env=env,text=True,capture_output=True)
+                if value in (None,"0","1"):
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn(f"-DC550_WAVE_MASK_TYPES={value or '0'}",result.stdout.splitlines())
+                else:
+                    self.assertEqual(result.returncode,2)
+                    self.assertEqual(result.stdout,"")
 
 
 if __name__ == "__main__":

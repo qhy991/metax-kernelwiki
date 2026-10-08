@@ -13,14 +13,40 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
+
+#ifndef C550_WAVE_MASK_TYPES
+#define C550_WAVE_MASK_TYPES 0
+#endif
+#if C550_WAVE_MASK_TYPES != 0 && C550_WAVE_MASK_TYPES != 1
+#error "C550_WAVE_MASK_TYPES must be 0 or 1"
+#endif
 
 namespace {
 constexpr uint64_t kInputElements = 128;
 constexpr uint64_t kGuardElements = 32;
-constexpr unsigned kChannels = 9;
+constexpr unsigned kChannels = C550_WAVE_MASK_TYPES ? 2 : 9;
+constexpr const char* kExperiment = C550_WAVE_MASK_TYPES ? "wave64-int32-mask-types" : "wave64-int32-collectives";
 static_assert(sizeof(unsigned long) * CHAR_BIT == 64, "Collective mask requires 64-bit unsigned long");
+static_assert(sizeof(unsigned) * CHAR_BIT == 32, "Compatibility overload requires 32-bit unsigned");
 static_assert(sizeof(int) * CHAR_BIT == 32, "Collective payload requires signed int32");
+static_assert(std::is_same<unsigned long, uint64_t>::value, "Full-wave mask must exactly match the uint64_t overload");
+static_assert(std::is_same<decltype(0xffffffffffffffffUL), unsigned long>::value, "Full-wave mask literal type mismatch");
+static_assert(std::is_same<decltype(0xffffffffU), unsigned>::value, "Half-wave mask literal type mismatch");
+
+#if C550_WAVE_MASK_TYPES
+#ifndef MACA_HALF_WARP_SIZE
+#error "Installed MACA_HALF_WARP_SIZE declaration is required for the mask-types experiment"
+#else
+static_assert(MACA_HALF_WARP_SIZE == 32, "Installed compatibility overload must declare 32-element groups");
+#endif
+
+void write_channel_contracts(std::ostream& records) {
+    records << "[{\"channel\":0,\"mask_type\":\"unsigned long\",\"mask_hex\":\"0xffffffffffffffff\",\"mask_bits\":64,\"group_width\":64},"
+               "{\"channel\":1,\"mask_type\":\"unsigned\",\"mask_hex\":\"0xffffffff\",\"mask_bits\":32,\"group_width\":32}]";
+}
+#endif
 
 void check_mc(mcError_t status, const char* expression) {
     if (status != mcSuccess)
@@ -85,6 +111,16 @@ std::vector<Case> read_plan(const std::string& directory) {
 }
 
 // All physical threads participate and write all channels, even when n == 0.
+#if C550_WAVE_MASK_TYPES
+__global__ void wave_mask_types_kernel(const int* __restrict__ input, int* __restrict__ output, unsigned n) {
+    const unsigned thread = threadIdx.x;
+    const int value = thread < n ? input[thread] : 0;
+    const unsigned long mask64 = 0xffffffffffffffffUL;
+    const unsigned mask32 = 0xffffffffU;
+    output[thread * kChannels + 0] = __reduce_add_sync(mask64, value);
+    output[thread * kChannels + 1] = __reduce_add_sync(mask32, value);
+}
+#else
 __global__ void wave_collectives_kernel(const int* __restrict__ input, int* __restrict__ output, unsigned n) {
     const unsigned thread = threadIdx.x;
     const int value = thread < n ? input[thread] : 0;
@@ -99,9 +135,14 @@ __global__ void wave_collectives_kernel(const int* __restrict__ input, int* __re
     output[thread * kChannels + 7] = __shfl_sync(mask, value, 63, 32);
     output[thread * kChannels + 8] = __reduce_add_sync(mask, value);
 }
+#endif
 
 void launch(const Case& c, const int* input, int* output) {
+#if C550_WAVE_MASK_TYPES
+    wave_mask_types_kernel<<<1, c.block>>>(input, output, c.n);
+#else
     wave_collectives_kernel<<<1, c.block>>>(input, output, c.n);
+#endif
     MC_CHECK(mcGetLastError());
 }
 
@@ -151,18 +192,30 @@ void run(const std::string& input_directory, const std::string& output_directory
             << ",\"shared_mem_per_block_bytes\":" << property.sharedMemPerBlock
             << ",\"max_threads_per_multiprocessor\":" << property.maxThreadsPerMultiProcessor
             << ",\"max_threads_per_block\":" << property.maxThreadsPerBlock << "}\n";
-    records << "{\"type\":\"protocol\",\"schema_version\":1,\"experiment\":\"wave64-int32-collectives\","
-               "\"input_elements\":" << kInputElements << ",\"guard_elements_each_side\":" << kGuardElements
-            << ",\"dtype\":\"int32\",\"timer\":\"mcEventElapsedTime\","
-               "\"required_wave_size\":64,\"mask_hex\":\"0xffffffffffffffff\",\"mask_bits\":64,"
+    records << "{\"type\":\"protocol\",\"schema_version\":1,\"experiment\":" << json_string(kExperiment)
+            << ",\"input_elements\":" << kInputElements << ",\"guard_elements_each_side\":" << kGuardElements
+            << ",\"dtype\":\"int32\",\"timer\":\"mcEventElapsedTime\",\"required_wave_size\":64,";
+#if C550_WAVE_MASK_TYPES
+    records << "\"mask_types_mode\":1,\"participation\":\"all physical threads\","
+               "\"channels\":[\"reduce_add_unsigned_long64\",\"reduce_add_unsigned32\"],\"channel_contracts\":";
+    write_channel_contracts(records);
+    records << ",";
+#else
+    records << "\"mask_hex\":\"0xffffffffffffffff\",\"mask_bits\":64,"
                "\"participation\":\"all physical threads\","
                "\"channels\":[\"shfl_width64_src0\",\"shfl_width64_src31\",\"shfl_width64_src32\",\"shfl_width64_src63\","
-               "\"shfl_width32_src0\",\"shfl_width32_src31\",\"shfl_width32_src32\",\"shfl_width32_src63\",\"reduce_add_wave64\"],"
-               "\"timed_scope\":\"default-stream events around 10 launches; may include device idle gaps during host submission\","
+               "\"shfl_width32_src0\",\"shfl_width32_src31\",\"shfl_width32_src32\",\"shfl_width32_src63\",\"reduce_add_wave64\"],";
+#endif
+    records << "\"timed_scope\":\"default-stream events around 10 launches; may include device idle gaps during host submission\","
                "\"cache_policy\":\"repeated addresses; no explicit application cache reset; runtime cache policy unknown\","
-               "\"transfer_scope\":\"allocation, initialization, transfers and file writes outside event intervals\","
-               "\"interpretation\":\"descriptive full nine-collective kernel timing; not per-intrinsic latency or an implementation comparison\","
-               "\"function_attribute_query\":\"before each case's warmups and timing\","
+               "\"transfer_scope\":\"allocation, initialization, transfers and file writes outside event intervals\",";
+#if C550_WAVE_MASK_TYPES
+    records << "\"interpretation\":\"descriptive complete two-channel mask-type kernel; different group operations, not a speedup comparison\","
+               "\"group_width_scope\":\"declared expected semantic group per channel; physical runtime wave remains 64\",";
+#else
+    records << "\"interpretation\":\"descriptive full nine-collective kernel timing; not per-intrinsic latency or an implementation comparison\",";
+#endif
+    records << "\"function_attribute_query\":\"before each case's warmups and timing\","
                "\"wave_size_note\":\"MACA 3.5.3 headers alias waveSize to warpSize; one API observation\","
                "\"MACA_LAUNCH_MODE\":" << json_environment("MACA_LAUNCH_MODE")
             << ",\"MACA_LAUNCH_BLOCKING\":" << json_environment("MACA_LAUNCH_BLOCKING")
@@ -186,14 +239,24 @@ void run(const std::string& input_directory, const std::string& output_directory
         const uint64_t words = c.block * kChannels + 2 * kGuardElements;
         MC_CHECK(mcMemset(device_output, 0xff, words * sizeof(int)));
         mcFuncAttributes attributes{};
+#if C550_WAVE_MASK_TYPES
+        MC_CHECK(mcFuncGetAttributes(&attributes, reinterpret_cast<const void*>(wave_mask_types_kernel)));
+#else
         MC_CHECK(mcFuncGetAttributes(&attributes, reinterpret_cast<const void*>(wave_collectives_kernel)));
+#endif
         records << "{\"type\":\"case\",\"id\":" << json_string(c.id)
                 << ",\"block\":" << c.block << ",\"n\":" << c.n
                 << ",\"physical_threads\":" << c.block << ",\"logical_threads\":" << c.n
                 << ",\"zero_padded_threads\":" << c.block - c.n << ",\"wave_size\":64,\"wave_count\":" << c.block / 64
-                << ",\"block_x\":" << c.block << ",\"block_y\":1,\"block_z\":1,\"grid_x\":1,\"grid_y\":1,\"grid_z\":1"
-                << ",\"mask_hex\":\"0xffffffffffffffff\",\"mask_bits\":64,\"participation\":\"all physical threads\""
-                << ",\"channels_per_thread\":9,\"output_layout\":\"thread-major\",\"output_elements\":" << c.block * kChannels
+                << ",\"block_x\":" << c.block << ",\"block_y\":1,\"block_z\":1,\"grid_x\":1,\"grid_y\":1,\"grid_z\":1";
+#if C550_WAVE_MASK_TYPES
+        records << ",\"channel_contracts\":";
+        write_channel_contracts(records);
+        records << ",\"participation\":\"all physical threads\"";
+#else
+        records << ",\"mask_hex\":\"0xffffffffffffffff\",\"mask_bits\":64,\"participation\":\"all physical threads\"";
+#endif
+        records << ",\"channels_per_thread\":" << kChannels << ",\"output_layout\":\"thread-major\",\"output_elements\":" << c.block * kChannels
                 << ",\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
                 << ",\"numRegs\":" << attributes.numRegs << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
                 << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}"

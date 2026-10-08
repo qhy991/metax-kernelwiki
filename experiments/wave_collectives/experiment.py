@@ -12,15 +12,40 @@ import sys
 import math
 
 EXPERIMENT = "wave64-int32-collectives"
+MASK_TYPE_EXPERIMENT = "wave64-int32-mask-types"
 INPUT_ELEMENTS = 128
 GUARD_ELEMENTS = 32
 GUARD_WORD = 0xFFFFFFFF
 MASK_HEX = "0xffffffffffffffff"
 CHANNELS = tuple(f"shfl_width{width}_src{source}" for width in (64, 32) for source in (0, 31, 32, 63)) + ("reduce_add_wave64",)
+MASK_TYPE_CHANNELS = ("reduce_add_unsigned_long64", "reduce_add_unsigned32")
+GROUP_WIDTH_SCOPE = "declared expected semantic group per channel; physical runtime wave remains 64"
 COLUMNS = ("id", "block", "n", "warmups", "samples", "launches")
 COMMON_N = (0, 1, 31, 32, 33, 63, 64)
 BOUNDARIES = {64: COMMON_N, 128: (*COMMON_N, 65, 95, 96, 97, 127, 128)}
 ENVIRONMENT = ("MACA_LAUNCH_MODE", "MACA_LAUNCH_BLOCKING", "MACA_DIRECT_DISPATCH", "MACA_CACHE_PATH", "MACA_CACHE_DISABLE")
+
+
+def suite_channels(suite: str) -> tuple[str, ...]:
+    if suite == "default":
+        return CHANNELS
+    if suite == "mask-types":
+        return MASK_TYPE_CHANNELS
+    raise ValueError("Unknown preparation suite")
+
+
+def mask_type_contracts() -> list[dict]:
+    return [dict(channel=0, mask_type="unsigned long", mask_hex=MASK_HEX, mask_bits=64, group_width=64),
+            dict(channel=1, mask_type="unsigned", mask_hex="0xffffffff", mask_bits=32, group_width=32)]
+
+
+def validate_channel_contracts(actual) -> None:
+    expected = mask_type_contracts()
+    if (not isinstance(actual, list) or len(actual) != len(expected)
+            or any(not isinstance(row, dict) or set(row) != set(want)
+                   or any(type(row[field]) is not type(value) or row[field] != value for field, value in want.items())
+                   for row, want in zip(actual, expected))):
+        raise ValueError("Invalid per-channel mask type contract")
 
 
 def require_int32_little_endian() -> None:
@@ -31,6 +56,10 @@ def require_int32_little_endian() -> None:
 def default_cases() -> list[dict]:
     return [dict(id=f"wave_b{block}_n{n}", block=block, n=n, warmups=10, samples=10, launches=10)
             for block, lengths in BOUNDARIES.items() for n in lengths]
+
+
+def mask_type_cases() -> list[dict]:
+    return [dict(case, id=case["id"].replace("wave_", "mask_types_", 1)) for case in default_cases()]
 
 
 def validate_case(case: dict) -> None:
@@ -65,8 +94,9 @@ def read_plan(path: Path) -> list[dict]:
     return cases
 
 
-def oracle_metadata() -> dict:
-    return dict(schema_version=1, experiment=EXPERIMENT, input_elements=128,
+def oracle_metadata(suite: str = "default") -> dict:
+    channels = suite_channels(suite)
+    result = dict(schema_version=1, experiment=EXPERIMENT, input_elements=128,
                 dtype="little-endian int32", input_rule="input[i] = i + 1 for 0 <= i < 128",
                 value_rule="physical thread i uses input[i] when i < n, else zero; no thread exits before collectives",
                 required_wave_size=64, participation="all physical threads", mask_hex=MASK_HEX, mask_bits=64,
@@ -75,19 +105,39 @@ def oracle_metadata() -> dict:
                 reduction_rule="exact sum of each independent 64-element wave slice, returned to every thread in that wave",
                 guard_elements_each_side=GUARD_ELEMENTS, guard_uint32=GUARD_WORD,
                 comparison="exact int32 bits for every physical thread and all nine channels, including zeros")
+    if suite == "mask-types":
+        for field in ("mask_hex", "mask_bits", "shuffle_rule"):
+            result.pop(field)
+        result.update(experiment=MASK_TYPE_EXPERIMENT, channels=list(channels),
+                      output_layout="thread-major: output[thread * 2 + channel]",
+                      channel_contracts=mask_type_contracts(), group_width_scope=GROUP_WIDTH_SCOPE,
+                      reduction_rule="exact independent group sums: unsigned long mask channel uses 64-element slices; unsigned mask channel uses 32-element slices",
+                      comparison="exact int32 bits for every physical thread and both mask-type channels, including zeros")
+    return result
 
 
-def prepare(destination: Path) -> dict:
+def infer_suite(oracle: dict) -> str:
+    encoded = json.dumps(oracle, sort_keys=True, allow_nan=False)
+    for suite in ("default", "mask-types"):
+        if encoded == json.dumps(oracle_metadata(suite), sort_keys=True, allow_nan=False):
+            if suite == "mask-types":
+                validate_channel_contracts(oracle["channel_contracts"])
+            return suite
+    raise ValueError("Unsupported oracle metadata")
+
+
+def prepare(destination: Path, suite: str = "default") -> dict:
     require_int32_little_endian()
+    metadata = oracle_metadata(suite)
     destination.mkdir(parents=True, exist_ok=False)
     with (destination / "input.i32").open("wb") as handle:
         array.array("i", range(1, INPUT_ELEMENTS + 1)).tofile(handle)
-    cases = default_cases()
+    cases = default_cases() if suite == "default" else mask_type_cases()
     with (destination / "cases.tsv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
-    (destination / "oracle.json").write_text(json.dumps(oracle_metadata(), indent=2) + "\n")
+    (destination / "oracle.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return dict(prepared=str(destination), cases=len(cases), input_elements=INPUT_ELEMENTS, input_bytes=4 * INPUT_ELEMENTS)
 
 
@@ -105,11 +155,19 @@ def validate_input(source: array.array) -> None:
         raise ValueError("Input must contain all 128 exact consecutive values 1..128")
 
 
-def reference_output(case: dict, source: array.array) -> list[int]:
+def reference_output(case: dict, source: array.array, suite: str = "default") -> list[int]:
+    suite_channels(suite)
     validate_case(case)
     validate_input(source)
     values = list(source[:case["n"]]) + [0] * (case["block"] - case["n"])
     per_thread = [[] for _ in values]
+    if suite == "mask-types":
+        for width in (64, 32):
+            for start in range(0, len(values), width):
+                total = sum(values[start:start + width])
+                for row in per_thread[start:start + width]:
+                    row.append(total)
+        return [value for row in per_thread for value in row]
     for width in (64, 32):
         # Explicit subgroup slices; no hardware lane bit manipulation is used.
         groups = [values[start:start + width] for start in range(0, len(values), width)]
@@ -124,8 +182,9 @@ def reference_output(case: dict, source: array.array) -> list[int]:
     return [value for row in per_thread for value in row]
 
 
-def validate_output(case: dict, source: array.array, output: array.array) -> dict:
-    expected = reference_output(case, source)
+def validate_output(case: dict, source: array.array, output: array.array, suite: str = "default") -> dict:
+    channel_count = len(suite_channels(suite))
+    expected = reference_output(case, source, suite)
     if len(output) != len(expected) + 2 * GUARD_ELEMENTS:
         raise ValueError(f"{case['id']}: incorrect output extent")
     for side, guard in (("prefix", output[:GUARD_ELEMENTS]), ("suffix", output[-GUARD_ELEMENTS:])):
@@ -134,23 +193,31 @@ def validate_output(case: dict, source: array.array, output: array.array) -> dic
     mismatches = [index for index, value in enumerate(expected) if output[GUARD_ELEMENTS + index] != value]
     if mismatches:
         index = mismatches[0]
-        raise ValueError(f"{case['id']}: {len(mismatches)} mismatches; first thread={index // 9}, channel={index % 9}")
+        raise ValueError(f"{case['id']}: {len(mismatches)} mismatches; first thread={index // channel_count}, channel={index % channel_count}")
     return dict(payload_elements_checked=len(expected), physical_threads_checked=case["block"],
-                channels_per_thread=9, zero_outputs_checked=expected.count(0), guard_elements_checked=64,
+                channels_per_thread=channel_count, zero_outputs_checked=expected.count(0), guard_elements_checked=64,
                 mismatches=0)
 
 
-def case_metadata(case: dict) -> dict:
+def case_metadata(case: dict, suite: str = "default") -> dict:
+    channel_count = len(suite_channels(suite))
     validate_case(case)
-    return dict(block=case["block"], n=case["n"], physical_threads=case["block"], logical_threads=case["n"],
+    result = dict(block=case["block"], n=case["n"], physical_threads=case["block"], logical_threads=case["n"],
                 zero_padded_threads=case["block"]-case["n"], wave_size=64, wave_count=case["block"]//64,
                 block_x=case["block"], block_y=1, block_z=1, grid_x=1, grid_y=1, grid_z=1,
                 mask_hex=MASK_HEX, mask_bits=64, participation="all physical threads", channels_per_thread=9,
                 output_elements=case["block"]*9, output_layout="thread-major", output_file=case["id"]+".i32",
                 warmups=10, samples=10, launches_per_sample=10, total_launches=110)
+    if suite == "mask-types":
+        result.pop("mask_hex")
+        result.pop("mask_bits")
+        result.update(channel_contracts=mask_type_contracts(), channels_per_thread=channel_count,
+                      output_elements=case["block"] * channel_count)
+    return result
 
 
-def validate_records(records: list[dict], cases: list[dict]) -> dict[str, list[dict]]:
+def validate_records(records: list[dict], cases: list[dict], suite: str = "default") -> dict[str, list[dict]]:
+    channels = suite_channels(suite)
     for kind in ("device", "protocol", "complete"):
         if sum(row.get("type") == kind for row in records) != 1:
             raise ValueError(f"Expected exactly one {kind} record")
@@ -171,6 +238,15 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str, list[d
                              dtype="int32", guard_elements_each_side=32, timer="mcEventElapsedTime",
                              required_wave_size=64, mask_hex=MASK_HEX, mask_bits=64,
                              channels=list(CHANNELS), participation="all physical threads")
+    if suite == "mask-types":
+        expected_protocol.pop("mask_hex")
+        expected_protocol.pop("mask_bits")
+        expected_protocol.update(experiment=MASK_TYPE_EXPERIMENT, channels=list(channels),
+                                 channel_contracts=mask_type_contracts(), mask_types_mode=1,
+                                 group_width_scope=GROUP_WIDTH_SCOPE)
+        validate_channel_contracts(protocol.get("channel_contracts"))
+        if "mask_hex" in protocol or "mask_bits" in protocol:
+            raise ValueError("Mask-types protocol cannot declare a single mask")
     for field, value in expected_protocol.items():
         if type(protocol.get(field)) is not type(value) or protocol[field] != value:
             raise ValueError(f"Protocol metadata mismatch: {field}")
@@ -192,7 +268,11 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str, list[d
         if kind == "case":
             if key in declarations:
                 raise ValueError(f"Duplicate case: {key}")
-            for field, value in case_metadata(by_id[key]).items():
+            if suite == "mask-types":
+                validate_channel_contracts(record.get("channel_contracts"))
+                if "mask_hex" in record or "mask_bits" in record:
+                    raise ValueError("Mask-types case cannot declare a single mask")
+            for field, value in case_metadata(by_id[key], suite).items():
                 if type(record.get(field)) is not type(value) or record[field] != value:
                     raise ValueError(f"Case metadata mismatch: {key}: {field}")
             attributes = record.get("function_attributes_before_timing")
@@ -221,40 +301,46 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str, list[d
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     require_int32_little_endian()
-    if json.loads((input_directory / "oracle.json").read_text()) != oracle_metadata():
-        raise ValueError("Unsupported oracle metadata")
+    suite = infer_suite(json.loads((input_directory / "oracle.json").read_text()))
     cases = read_plan(input_directory / "cases.tsv")
     source = read_words(input_directory / "input.i32", INPUT_ELEMENTS)
     validate_input(source)
     records = [json.loads(line) for line in (output_directory / "raw.jsonl").read_text().splitlines()]
-    samples = validate_records(records, cases)
+    samples = validate_records(records, cases, suite)
     declarations = {record["id"]: record for record in records if record["type"] == "case"}
     summaries = []
     for case in cases:
-        row = dict(id=case["id"], **case_metadata(case))
+        row = dict(id=case["id"], **case_metadata(case, suite))
         row["function_attributes_before_timing"] = declarations[case["id"]]["function_attributes_before_timing"]
         output = read_words(output_directory / row["output_file"], row["output_elements"] + 2 * GUARD_ELEMENTS)
-        row.update(validate_output(case, source, output))
+        row.update(validate_output(case, source, output, suite))
         timings = [sample["event_batch_ms"] * 1000 / 10 for sample in samples[case["id"]]]
         row.update(event_mean_per_launch_us_median=statistics.median(timings),
                    event_mean_per_launch_us_min=min(timings), event_mean_per_launch_us_max=max(timings), sample_count=10)
         summaries.append(row)
-    return dict(status="pass", experiment=EXPERIMENT, input_elements_checked=128, cases_checked=len(cases),
+    result = dict(status="pass", experiment=EXPERIMENT, input_elements_checked=128, cases_checked=len(cases),
                 checker="independent subgroup list slices and exact integer sums; every physical thread/channel and both guards checked",
                 timing_scope="descriptive full nine-collective kernel batch averages only; not per-intrinsic latency or an implementation comparison",
                 cases=summaries)
+    if suite == "mask-types":
+        result.update(experiment=MASK_TYPE_EXPERIMENT,
+                      checker="independent 64/32-element group sums; every physical thread/channel and both guards checked",
+                      timing_scope="descriptive complete two-channel mask-type kernel batches; different group operations, not a speedup comparison")
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("prepare").add_argument("directory", type=Path)
+    preparation = commands.add_parser("prepare")
+    preparation.add_argument("directory", type=Path)
+    preparation.add_argument("--suite", choices=("default", "mask-types"), default="default")
     checker = commands.add_parser("check")
     checker.add_argument("input_directory", type=Path)
     checker.add_argument("output_directory", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory) if args.command == "prepare" else check(args.input_directory, args.output_directory)
+        result = prepare(args.directory, args.suite) if args.command == "prepare" else check(args.input_directory, args.output_directory)
         print(json.dumps(result, indent=2, allow_nan=False))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as error:

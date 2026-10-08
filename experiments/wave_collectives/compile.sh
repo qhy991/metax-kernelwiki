@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# -ne 1 ]]; then
-    echo "Usage: C550_ARCH=<observed compiler arch> compile.sh OUTPUT_BINARY" >&2
+    echo "Usage: C550_ARCH=<observed compiler arch> [C550_WAVE_MASK_TYPES=0|1] compile.sh OUTPUT_BINARY" >&2
     exit 2
 fi
+probe_mask_types="${C550_WAVE_MASK_TYPES-0}"
+case "$probe_mask_types" in
+    0|1) ;;
+    *) echo "C550_WAVE_MASK_TYPES must be 0 or 1" >&2; exit 2 ;;
+esac
 : "${C550_ARCH:?Set C550_ARCH from compiler/device evidence before CPU-only compilation}"
 probe_source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${MXCC:-mxcc}" -O3 -std=c++17 -x maca -offload-arch="$C550_ARCH" \
-    --maca-path="${MACA_PATH:-/opt/maca}" "$probe_source_dir/probe.cpp" -o "$1"
+    --maca-path="${MACA_PATH:-/opt/maca}" "-DC550_WAVE_MASK_TYPES=$probe_mask_types" \
+    "$probe_source_dir/probe.cpp" -o "$1"

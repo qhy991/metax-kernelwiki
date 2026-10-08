@@ -9,6 +9,10 @@ subgroup, and the signed integer reduction interface. These documentation and
 source declarations require compilation and device evidence before becoming
 local correctness observations.
 
+The default build and preparation remain the original nine-channel experiment.
+An opt-in mask-type suite, described below, uses two reduction channels and a
+distinct experiment/oracle contract within the same host harness.
+
 ## Fixed cases and participation
 
 Every launch has exactly one block, with 64 or 128 physical threads. The
@@ -148,3 +152,78 @@ and padded-thread outputs, wrong 32-thread/block-wide reductions, incorrect
 second-wave sources, nonzero padding, unwritten physical outputs, both guards,
 invalid plans, mask/boundary metadata and incomplete samples. CPU tests and
 synthetic file fixtures do not execute MACA intrinsics or prove GPU correctness.
+
+## Opt-in installed mask-type overload experiment
+
+`C550_WAVE_MASK_TYPES=1` builds a separate two-channel kernel. Its two calls
+explicitly retain the mask argument types declared by the installed SDK:
+
+```cpp
+const unsigned long mask64 = 0xffffffffffffffffUL;
+const unsigned mask32 = 0xffffffffU;
+output[thread * 2 + 0] = __reduce_add_sync(mask64, value);
+output[thread * 2 + 1] = __reduce_add_sync(mask32, value);
+```
+
+Channel 0's expected semantic group has 64 elements; channel 1's expected group
+has 32 elements under the installed half-wave compatibility overload. These are
+two explicitly typed full-mask APIs, and their numeric mask values also differ.
+The expected group-width contract comes from inspection of the installed
+overloads; it is not a measured physical width. The observed physical runtime
+wave remains 64, and all physical threads participate without an early return.
+The 32-bit mask stays in an `unsigned` variable through its call. The experiment
+never passes a truncated low-32-bit value typed as a 64-bit mask.
+
+The source asserts `sizeof(unsigned)*CHAR_BIT == 32`,
+`sizeof(unsigned long)*CHAR_BIT == 64`, and a 32-bit signed `int`. It also asserts
+that `unsigned long` is exactly `uint64_t` and verifies both mask literal types.
+The opt-in mode requires the installed `MACA_HALF_WARP_SIZE` macro to exist and
+equal 32. A missing declaration, different type/width or unavailable intrinsic
+causes compilation to fail; no guessed constant or alternate implementation is
+substituted. Compilation alone still does not establish device semantics or
+native-instruction selection.
+
+Use matching preparation and compilation modes:
+
+```sh
+python3 experiments/wave_collectives/experiment.py prepare /tmp/metax-mask-input --suite mask-types
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 C550_WAVE_MASK_TYPES=1 \
+  bash experiments/wave_collectives/compile.sh /tmp/metax-mask-probe
+```
+
+The compile flag accepts exactly `0` or `1`; omission selects `0`. All other
+values are refused before the compiler runs, and the selected value is passed
+explicitly with `-D`. Default `prepare` and a mode-0 binary retain the original
+20 cases, nine-channel kernel, record fields and oracle. The mode-1 preparation
+has the same 20 block/logical-length cases under distinct `mask_types_b...` IDs,
+and `wave64-int32-mask-types` identifies its oracle and raw protocol. The checker
+selects a mode only from an exact recognized oracle contract; unknown or mixed
+contracts fail instead of being translated.
+
+New outputs are thread-major, `output[thread * 2 + channel]`. Their protocol and
+case records contain a `channel_contracts` list with each channel's `mask_type`,
+`mask_hex` string, `mask_bits` and declared `group_width`. They do not carry a
+misleading single-mask field. `wave_size=64` remains separate. The opt-in raw
+protocol records `mask_types_mode=1`. Old records require none of these new
+fields and remain readable with the existing default helper calls.
+
+The CPU oracle independently sums 64-element and 32-element list slices of the
+same padded input. Full block 128 expects 2,080 / 6,176 in channel 0 and
+528 / 1,552 / 2,576 / 3,600 in channel 1. Zero logical lengths and all physical
+tail outputs remain checked. Input, guards, runtime checks and the
+10-warmup + 10×10 timing contract are unchanged. The 20-case mask-type suite
+checks 4,224 payload words plus 1,280 guards. Its largest output allocation is
+1,280 bytes, alongside the same 512-byte input.
+
+Because the channels request different group operations, neither their times
+nor comparison with the nine-channel kernel is a speedup for one operator.
+Timing remains descriptive of the complete two-channel kernel. Full masks with
+two fixed types do not establish arbitrary-mask participation, inactive-source
+behavior or memory ordering. Device observations must be bound to the installed
+header/toolchain and the successor source commit.
+
+Additional CPU tests check exact two-channel sums, 95/96/97 tails, swapped
+channels, incorrect group boundaries, lost upper-half results, nonzero padding,
+unwritten outputs, strict per-channel metadata and compile-flag admission. The
+existing nine-channel tests remain as regressions; synthetic fixtures are not
+device evidence.

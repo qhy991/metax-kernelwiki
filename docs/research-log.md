@@ -155,8 +155,16 @@ Two opposite-order six-case sweeps and six preselected traces retain 18 paired o
 
 [Component and K-slot evidence](../wiki/wmma-exactness.md#successor-single-products-and-k-slot-permutations) · [All retained words and batches](../data/results/20261008-wmma-products.json). Auxiliary default/control/prefix/witness regressions contribute 61 logical cases and 110 output matrices, all matching prior buffers. Overall: 79 logical cases, 146 matrices, 1,460 batches; scalar 67/67 exact and WMMA 26/79 exact with 813 unequal elements. Correctness remains failed and performance unaccepted. All 12 workers and six profiled applications exited and passed release checks; no promotion to open-cake-ir.
 
+## 2026-10-08: Fixed-magnitude sign configurations
+
+Source `d1e1be9` adds a separate mode 3 sign contract while preserving older modes. It fixes M=N=16,K=2,C00 and joint B numerators [-1,-13], varying A signs to obtain all four combinations of product numerators 12 and 13 on the /256 output scale. Four standalone controls zero both inactive operands. Device and launch bodies remain unchanged. The frozen source passed 154 CPU checks, six native builds, 21 input/format negatives and three incompatible-mode negatives.
+
+Two eight-case sweeps in opposite orders and eight preselected traces retain 24 paired observations. Standalone and same-sign conditions are exact; the six mixed-sign WMMA matrices have one C00 mismatch each. `pair-pn` returns `0xbb800001` versus `0xbb800000`; `pair-np` returns `0x3b7ffffe` versus `0x3b800000`. Both signed residuals are -2^-31, although their adjacent-FP32 distances are one and two steps. All 24 scalar matrices are exact; other primary outputs are zero, snapshots agree and guards remain intact. These input contrasts do not establish an internal rounding or accumulation mechanism.
+
+[Sign-configuration evidence](../wiki/wmma-exactness.md#successor-fixed-magnitude-sign-configurations) · [All retained words and batches](../data/results/20261008-wmma-signs.json). Five auxiliary suites contribute 67 logical cases and 122 matrices, all matching prior buffers. The three explicitly input-matched primary conditions add 18 matching historical variant comparisons. Overall: 91 logical cases, 170 matrices and 1,700 batches; scalar 79/79 exact, WMMA 36/91 exact with 815 unequal elements. Correctness remains failed and performance unaccepted. All 15 workers and eight profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
 ## Next questions
 
-- Hold product magnitudes and K positions fixed while testing all four sign combinations and matching standalone controls. Preserve the isolated C00 tile, scalar checks and exact oracle. The complete four-sign comparison has not been run; the current `(+12,-13)` condition provides its existing baseline. A sign/cancellation hypothesis is not an established cause.
+- Compare neighboring pairs `(11,-12)`, `(12,-13)` and `(13,-14)` at fixed result -1/256, with matched components and the same isolated tile. The middle pair is a known baseline; the complete magnitude comparison is unmeasured. Product-preserving sign transfers remain a separate input question.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

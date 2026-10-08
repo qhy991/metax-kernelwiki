@@ -212,7 +212,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA exactness: standalone products and a persistent joint residual",
+      "title": "C550 WMMA exactness: fixed-magnitude signs and two negative residuals",
       "tags": [
         "WMMA",
         "matrix",
@@ -237,7 +237,10 @@
         "single product",
         "K slot",
         "permutation",
-        "component controls"
+        "component controls",
+        "sign configuration",
+        "cancellation",
+        "signed residual"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -248,10 +251,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/403a74a6211755e790886b84eefc45955c9588e6",
         "https://github.com/qhy991/metax-kernelwiki/tree/0cddd51024fcf00ef9dea2975ac050fd567f9507",
         "https://github.com/qhy991/metax-kernelwiki/tree/6fd66b9e6a5ca6794bd233b5a8190aba166d0941",
-        "https://github.com/qhy991/metax-kernelwiki/tree/7b8ee81f3a94dd5906f892408df2fb7086ee69a3"
+        "https://github.com/qhy991/metax-kernelwiki/tree/7b8ee81f3a94dd5906f892408df2fb7086ee69a3",
+        "https://github.com/qhy991/metax-kernelwiki/tree/d1e1be94cdbada03039494c3b5483439cda25791"
       ],
-      "result": "data/results/20261008-wmma-products.json",
-      "limitations": "The specified standalone products are exact at K0/K1, but both tested paired placements retain the same residual. This does not establish general one-product exactness, native accumulation order, a global minimum or a unique hardware cause. Passing components do not accept the failed pair or its performance."
+      "result": "data/results/20261008-wmma-signs.json",
+      "limitations": "For fixed product magnitudes 12/256 and 13/256 and the declared A/B factorization, standalone and same-sign cases are exact; both mixed-sign cases have signed residual -2^-31. This does not establish general mixed-sign failure, a rounding mode, sign-placement invariance or a unique hardware cause. Timings are not accepted as performance."
     }
   ]
 }

@@ -1,61 +1,63 @@
-# 第一方资料索引
+# Primary source index
 
-查阅日期：2026-10-07；C++ intrinsic契约补查于2026-10-08。此页是资料入口，不是 C550 测量结果。实机证据应保存设备型号、原生架构、软件版本、命令和原始输出，并链接到对应实验记录。
+[Home](../README.md) · [Toolchain](toolchain.md) · [Methodology](methodology.md)
 
-## 适用范围
+Accessed **2026-10-07**, with additional C++ intrinsic-contract checks on **2026-10-08**. This page indexes sources; it is not a C550 measurement record. Device evidence must retain the product, native architecture, software versions, commands, and raw outputs, with a link to the relevant experiment.
 
-MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X、C550、C550-PL、C588、N260 和 X206；集合成员不因此拥有相同容量、带宽、缓存或计算能力。官方发布说明同时区分 MXC600 系列与 MXC600-U。引用 C500 微架构教程时保留 C500 标签，待 C550 验证后再形成结论。[发布说明：概述][release-overview]
+## Product and version scope
 
-本轮未找到足以单独证明 **C550 → xcore1002** 映射的公开官方产品规格页。该映射、内存容量、处理器数量和原生 ISA 应由本次 C550 的设备查询及编译产物确认，不从 C500 文档或 CUDA 兼容值推导。
+MetaX's **MXC500 series** is a software-documentation support group containing C500, C500X, C550, C550-PL, C588, N260, and X206. Membership does not imply equal capacity, bandwidth, caches, or compute capability. Official release notes separately identify MXC600 and MXC600-U. Keep C500 microarchitecture tutorials labeled as C500 material until a C550 experiment supports a target-specific conclusion. [Release overview][release-overview]
 
-## 已核实的文档入口
+This search found no public official product specification sufficient on its own to establish the **C550 → xcore1002** mapping. That mapping, memory capacity, processor count, and native ISA need evidence from the actual C550 device queries and compilation artifacts. They cannot be inferred from C500 documentation or CUDA compatibility values.
 
-运行时指南现在固定引用官方 **3.5.3.x** 版本。初轮查阅的[旧入口 `/preview/567`][runtime-legacy]仍保留以便追溯；2026-10-07 读取该页的版本选择器时，活动版本是 **3.0.0.x**。它不能作为当前主机 3.5.3.18 的版本标识。以下 3.5.3.x 页面已重新检查执行模型、设备查询和编译章节；系列文档仍不等于 C550 本机验证。
+## Checked documentation entry points
 
-| 资料 | 可以支持什么 | 使用边界 |
+Runtime-guide links now select the official **3.5.3.x** version. The [legacy `/preview/567` entry][runtime-legacy] remains for provenance: its active version selector read **3.0.0.x** on 2026-10-07, so it does not identify the installed host's 3.5.3.18 version. The execution-model, device-query, and compilation chapters at the 3.5.3.x links were checked separately. Series documentation still does not establish local C550 validation.
+
+| Source | What it supports | Boundary |
 | --- | --- | --- |
-| [曦云系列运行时 API 编程指南 3.5.3.x][runtime] | 执行模型称 64 个线程为 wave；设备查询、内存、事件、kernel 启动和 MXCC 工程构建的入口 | 系列指南；数值仍需 C550 查询。指南示例用 `mcDeviceProp_t.waveSize`，本地 SDK 头文件可能含兼容别名 |
-| [运行时指南 3.5.3.x：Binary Cache][runtime-cache]、[环境变量][runtime-env] | §4.3 的未标注 launch bounds、1024-thread vector-add 示例说明 block 大于 512 会触发重编译和 binary cache；§4.4 定义缓存路径及禁用开关 | 这是该示例的文档行为，不是所有 kernel 的性能保证。需在本机区分设备上限、函数属性、首次 launch 与后续执行 |
-| [MXMACA C++语言扩展3.5.3.x][cpp-extensions] | shuffle的mask/width/源lane、整数collective与同步语义 | 活动版本选择器已核实；系列契约仍需安装头文件、编译与C550正确性验证，正文歧义见[工具链页](toolchain.md#64-lane-collective-的接口与实测范围) |
-| [MXMACA 发布说明：概述][release-overview] | 各软件组件的发布版本和产品系列适用范围 | `latest` 会移动，不等于实机安装版本 |
-| [MXMACA 发布说明：新增特性及变更][release-changes] | 判断功能在什么版本出现；例如 3.7.0 节记录 `-offload-arch=native`，也记录工具与编译器变更 | 不据此认定宿主 3.5.3 已具备新版本功能；也不据旧记录否定本地回移补丁 |
-| [MXMACA 发布说明：已知问题和使用限制][release-limits] | 发现需针对性排查的版本及场景限制，包括 C550 OAM 的部分通信算子问题 | 限制有具体场景，不能外推到所有 C550 kernel；不直接照抄环境变量作为优化配置 |
-| [官方性能优化指南 README][guide] | `guide/`、`case/`、`microbenchmark/` 的导航；原仓库声明测试设备为 C500 与 A100 | 其 C500 数值只作为待验证的先验。检索时页面未声明许可证，优先链接、转述及独立编写探针 |
-| [官方向量加教程][vector-guide] | 可参考 `cucc` 路由、设备内存使用、预热、事件计时和错误检查 | 教程属于 C500 场景；用 CUDA 名称的接口是兼容表面，不是 NVIDIA 硬件身份 |
-| [mcProfiler 使用手册 PDF][profiler] | 性能计数器采集工具的使用入口、任务参数和指标选择 | 链接是较早文档；本次尚未验证 C550 所装工具的 CLI、权限和指标集 |
-| [mcTracer 使用手册 3.5.3.x][tracer]、[Viewer 章节][tracer-viewer] | 采集参数、输出 JSON 文件、专用 Viewer 入口；`/preview/995` 的版本选择器也标注 3.5.3.x | 已查阅采集与 Viewer 章节，但未找到导出 JSON 的 `ts` / `dur` 单位契约。不能用上游 MCPTI timestamp 单位或数值量级代替 exporter 的证据 |
-| [mxvs 测试工具套件 3.5.3.x 目录][mxvs] | 设备信息、PCIe、Memory、MetaXLink 和算力测试的官方参考入口 | 与自写 kernel 的计时范围不同，结果需分别报告；本轮未运行 |
+| [Runtime API Programming Guide 3.5.3.x][runtime] | The execution model calls 64 threads a wave; entry points for device queries, memory, events, kernel launches, and MXCC builds. | Series-level guidance; query C550 for device values. Examples use `mcDeviceProp_t.waveSize`, while installed SDK headers may contain compatibility aliases. |
+| [Runtime Guide 3.5.3.x: Binary Cache][runtime-cache] and [environment variables][runtime-env] | Section 4.3 describes recompilation and binary caching when the unannotated vector-add example uses a 1024-thread block, exceeding 512. Section 4.4 defines the cache path and disable switch. | This documents that example, not a performance guarantee for every kernel. Distinguish device limits, function attributes, first launch, and later execution locally. |
+| [MXMACA C++ language extensions 3.5.3.x][cpp-extensions] | Shuffle mask, width, and source-lane rules; integer collectives and synchronization semantics. | The active version selector was checked. The series contract still needs installed-header, compilation, and C550 correctness checks. See [toolchain caveats](toolchain.md#64-lane-collective-contracts-and-measured-scope) for ambiguous wording. |
+| [MXMACA release overview][release-overview] | Software-component versions and supported product families. | `latest` is mutable and does not identify installed software. |
+| [MXMACA new features and changes][release-changes] | Version history: for example, section 3.7.0 records `-offload-arch=native` and tool/compiler changes. | This does not show that a 3.5.3 host has newer features; older notes also do not rule out local backports. |
+| [MXMACA known issues and limitations][release-limits] | Version- and scenario-specific leads, including some communication-operator issues on C550 OAM. | Do not generalize a scoped limitation to all C550 kernels or copy environment settings as optimization defaults. |
+| [Official performance-tuning guide README][guide] | Navigation for `guide/`, `case/`, and `microbenchmark/`; the repository names C500 and A100 as its test devices. | C500 measurements are hypotheses to test locally. No license was declared on the inspected page; prefer links, paraphrases, and independently written probes. |
+| [Official vector-add tutorial][vector-guide] | Examples of the `cucc` route, device memory, warmup, event timing, and error checking. | The tutorial targets C500. CUDA-named interfaces are compatibility APIs, not NVIDIA hardware identity. |
+| [mcProfiler manual PDF][profiler] | Entry point for performance-counter collection, task parameters, and metric selection. | This is an older manual. The installed C550 tool's CLI, permissions, and metric set have not been validated in this work. |
+| [mcTracer manual 3.5.3.x][tracer] and [Viewer chapter][tracer-viewer] | Collection options, JSON outputs, and the dedicated Viewer. The `/preview/995` version selector also identifies 3.5.3.x. | The collection and Viewer chapters were read, but no exported JSON `ts`/`dur` unit contract was found. Upstream MCPTI timestamp units or numerical scale cannot substitute for exporter evidence. |
+| [mxvs test-suite contents 3.5.3.x][mxvs] | Official device-information, PCIe, Memory, MetaXLink, and compute tests. | Their timing scope differs from a custom kernel's and needs separate reporting. This work has not run them. |
 
-## 已核实的官方代码
+## Checked official code
 
-下列 mcTriton 链接固定在 `7dd407c26568fceaca44cb894138e5202d369805`，其分支名是 `3.0`。该版本是网上代码观察，不代表 C550 本机 wheel 的源码身份。
+The mcTriton links below are pinned to **`7dd407c26568fceaca44cb894138e5202d369805`**, on the `3.0` branch. These are observations of published source, not proof of the installed C550 wheel's source identity.
 
-| 文件 | 可审查的具体实现 |
+| File | Implementation available for inspection |
 | --- | --- |
-| [mcTriton README][triton-readme] | 构建依赖来自 MACA 软件栈与 `metax_llvm`；构建脚本为 `maca_tools/build_triton.sh` |
-| [backend/driver.py][triton-driver] | 返回 `maca` backend 与 64-lane target；launcher 使用 `64 * num_warps` 个线程 |
-| [backend/driver.c][triton-driver-c] | 将设备 `major` 映射为 Triton capability：10→80、15→86、16→89；资源查询调用 MACA API |
-| [backend/compiler.py][triton-compiler] | `mcfatbin` 输出、编译阶段、MACA pipeline 选项以及 `num_warps` 检查 |
-| [triton_metax.cc][triton-codegen] | LLVM IR 经 MXCC 形成 fatbin；包含打印编译命令和保留中间产物的开关 |
-| [vLLM-metax 事件计时包装][kernel-timer] | 固定在 `f2fcc59c314f1fbc7897f46d465e5f7c35900e8a`；直接使用 `mc_runtime.h` 与 `mcEventElapsedTime` 的实际代码例子 |
-| [mcTVM][mctvm] | 官方另一条编译路线的入口；README 的 `metax/mxc-c500` 标签明确针对 C500 |
+| [mcTriton README][triton-readme] | Build dependencies from the MACA stack and `metax_llvm`; build script `maca_tools/build_triton.sh`. |
+| [backend/driver.py][triton-driver] | Returns the `maca` backend and a 64-lane target; the launcher uses `64 * num_warps` threads. |
+| [backend/driver.c][triton-driver-c] | Maps device `major` to Triton capability: 10→80, 15→86, 16→89. Resource queries use MACA APIs. |
+| [backend/compiler.py][triton-compiler] | `mcfatbin` output, compilation stages, MACA pipeline options, and `num_warps` checks. |
+| [triton_metax.cc][triton-codegen] | Forms a fatbin from LLVM IR through MXCC; includes switches to print the compilation command and retain intermediate files. |
+| [vLLM-metax event-timing wrapper][kernel-timer] | Pinned at `f2fcc59c314f1fbc7897f46d465e5f7c35900e8a`; an implementation using `mc_runtime.h` and `mcEventElapsedTime` directly. |
+| [mcTVM][mctvm] | Another official compilation route. Its README's `metax/mxc-c500` label explicitly targets C500. |
 
-## Shared memory 与同步的来源边界
+## Shared memory and synchronization
 
-[Runtime 3.5.3.x 编程模型的 WSM 说明][wsm-scope]将共享存储归属于线程块；[集体操作说明][block-sync]要求参与线程匹配同步调用，并给出 block sync 与 `__syncthreads` 的关系。本库的 tiled transpose 因此对边界 load/store 分别屏蔽，但让整个 block 到达同一 barrier。
+The [Runtime 3.5.3.x WSM description][wsm-scope] scopes shared storage to a thread block. The [collective-operation section][block-sync] requires participating threads to match synchronization calls and relates block synchronization to `__syncthreads`. The tiled transpose in this wiki therefore masks boundary loads and stores separately while letting the whole block reach the same barrier.
 
-[官方优化指南第3章的固定提交][c500-banks]明确描述的是 **C500**：32个bank、连续4-byte单元的分配，以及64线程warp的32-bit访问分成两个32线程阶段。该段未声明SDK版本，本轮未找到C550专属的同等bank契约。它只能提供待C550检验的预测，不能转写为C550硬件常量。即使增加一列padding有收益，这个二选一结果也不能识别bank数或冲突阶数。
+The [pinned chapter 3 of the official tuning guide][c500-banks] explicitly describes **C500**: 32 banks, consecutive 4-byte units, and 32-bit accesses by a 64-thread warp split into two 32-thread phases. That passage does not name an SDK version. This search found no equivalent C550-specific bank contract. The passage supports predictions to test on C550, not a C550 hardware constant. Even a benefit from one extra padding column cannot identify the bank count or conflict degree.
 
-## 第一批可证伪问题
+## Initial falsifiable questions
 
-以下是实验问题，均不是既成硬件结论。
+These are experiment questions, not established hardware conclusions. Later local findings are linked from the [research log](research-log.md).
 
-1. **身份与线程组：**C550 设备查询、原生编译器目标、Triton target 与实际 block 线程数能否对应？记录原生目标和兼容 capability 为不同字段，验证 32、64、128 线程边界以及尾部正确性。
-2. **计时范围：**同一 kernel 的单次事件、批量事件均摊和主机同步计时如何变化？先用空 kernel 与可控工作量核对量级，再分别报告启动开销、批量平均和测量噪声。
-3. **访存形状：**顺序、跨步、错位和向量化访存是否产生稳定差异？保持逻辑读取字节数与正确性相同，记录实际指令和缓存状态，不把有效带宽自动称作 HBM 带宽。
-4. **容量与复用：**工作集扫描是否出现可重复的延迟或带宽转折？热复用、独立地址和明确重置各做一组；单个转折不足以命名缓存层级或容量。
-5. **WSM 访问：**共享内存步长、广播与 padding 如何影响延迟？先测冲突模式，再解释 bank 结构；不预设 NVIDIA 的 bank 数和 bank 宽。
-6. **编译决策：**在同一已验证计算上，`num_warps`、`num_stages`、`basic/cpasync` 是否改变产物、正确性和时间？只有本机版本支持的选项才进入实验，不由选项名称推定硬件指令。
+1. **Identity and execution groups:** Do C550 device queries, the native compiler target, Triton target, and actual block size agree? Record native architecture and compatibility capability separately; check 32-, 64-, and 128-thread boundaries and tail correctness.
+2. **Timing scope:** How do single-launch events, amortized event batches, and host synchronization timing differ for the same kernel? Use empty kernels and controlled workloads first, then report launch cost, batch means, and measurement noise separately.
+3. **Memory access:** Do sequential, strided, misaligned, and vectorized accesses differ consistently? Hold logical read bytes and correctness fixed; record emitted instructions and cache state. Effective bandwidth is not automatically HBM bandwidth.
+4. **Capacity and reuse:** Does a working-set sweep show reproducible latency or bandwidth transitions? Separate repeated reuse, independent addresses, and explicit resets. One transition cannot identify a cache level or its capacity.
+5. **WSM access:** How do shared-memory stride, broadcast, and padding affect latency? Measure access patterns before interpreting bank structure; do not assume NVIDIA's bank count or width.
+6. **Compiler decisions:** For a validated computation, do `num_warps`, `num_stages`, or `basic/cpasync` change the artifact, correctness, or timing? Admit only options supported by the installed version; an option name does not establish a hardware instruction.
 
 [runtime]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/index.html
 [runtime-legacy]: https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html

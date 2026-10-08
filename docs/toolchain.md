@@ -1,96 +1,102 @@
-# C550 工具链：原生目标与兼容接口
+# C550 toolchain: native targets and compatibility interfaces
 
-本页区分网上源码、官方文档和本地安装。第一方入口及适用范围见 [资料索引](sources.md)。C550 的测量结果以实验记录为准。
+[Home](../README.md)
 
-## 当前环境记录边界
+This page distinguishes online source code, official documentation, and the local installation. See the [source index](sources.md) for primary references and their scope. Experiment records own C550 measurement results.
 
-2026-10-07，C550-1 的只读检查报告宿主安装目录为 `/opt/maca-3.5.3`，MXCC 版本输出为 `1.0.0 (6477545d4d)`。这两个版本标识各自保留：前者是 SDK 路径，后者是编译器报告，不能相互替代。最终复现记录还需保存驱动、运行时、容器和 Python 包版本，以及实际调用的编译器绝对路径。
+## Environment-record scope
 
-本地头文件检查还发现 `mc_runtime_api.h` 定义了 `waveSize` 到 `warpSize` 的兼容宏，而类型声明中出现两个名称。官方运行时指南的查询例子用 `waveSize`。因此“两个拼写都存在”不等于两个独立硬件事实；设备属性探针应同时保留所用源码、包含路径和输出。此处不填写尚未收录到实验记录的属性值。
+A read-only inspection of C550-1 on 2026-10-07 reported the host installation at `/opt/maca-3.5.3` and MXCC version `1.0.0 (6477545d4d)`. Retain both identifiers: an SDK path and a compiler report are different facts. Reproduction records must also retain driver, runtime, container, and Python package versions, plus the absolute path of the compiler actually invoked.
 
-## 三条开发入口
+The installed `mc_runtime_api.h` defines a compatibility macro from `waveSize` to `warpSize`, while type declarations contain both names. The official runtime guide's query example uses `waveSize`. Two spellings do not establish two independent hardware facts; retain the device-query source, include paths, and output together. This section does not supply property values absent from experiment records.
 
-| 入口 | 作用与可验证材料 |
+## Three development interfaces
+
+| Interface | Purpose and evidence to retain |
 | --- | --- |
-| MXCC / MXMACA C++ | 直接使用 MACA 运行时和 kernel 扩展；保存原生目标、完整命令、生成的设备代码及运行错误 |
-| cu-bridge / cucc | 供 CUDA 风格源代码适配 MACA；官方教程给出 `/opt/maca/tools/cu-bridge/bin/cucc`。保存实际路径与展开后的编译命令 |
-| mcTriton | Python/Triton 前端经 MetaX backend 生成设备代码；保存 wheel 版本、backend 文件位置、target、编译参数与产物 |
+| MXCC / MXMACA C++ | Direct MACA runtime and kernel extensions; retain the native target, complete command, generated device code, and runtime errors |
+| cu-bridge / cucc | Adapts CUDA-style source to MACA; the official tutorial uses `/opt/maca/tools/cu-bridge/bin/cucc`. Retain the actual path and expanded compilation command |
+| mcTriton | A Python/Triton frontend that generates device code through the MetaX backend; retain wheel version, backend file locations, target, options, and artifacts |
 
-原生入口来自[运行时指南 3.5.3.x][runtime]，兼容入口来自[官方向量加教程][vector-guide]。初轮使用的[旧运行时指南入口][runtime-legacy]在 2026-10-07 的版本选择器中标为 3.0.0.x；本页已改用重新查阅的 3.5.3.x 固定版本。本页的 mcTriton 实现观察固定在[源码版本 `7dd407c`][triton-readme]；尚未核对它与 C550 的已装包是否相同。
+The native interface is documented in the [runtime guide 3.5.3.x][runtime], and the compatibility interface in the [official vector-add tutorial][vector-guide]. The [older runtime-guide URL][runtime-legacy] used initially showed active version 3.0.0.x on 2026-10-07; this page now cites the rechecked 3.5.3.x version. The mcTriton implementation observations below are pinned to [source commit `7dd407c`][triton-readme], which has not been established as the source of the installed C550 package.
 
-## 原生编译模板
+## Native compilation template
 
-官方文档的基础形式为 `mxcc -x maca`，并显式指定 MACA 路径。下面是待结合实机已验证目标使用的模板，不是已通过的测试记录：
+The official documentation uses `mxcc -x maca` with an explicit MACA path. This template requires a native architecture supported by local evidence; it is not a passed test record:
 
 ```sh
 export MACA_PATH=/opt/maca-3.5.3
 export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-: "${C550_ARCH:?请先从本机设备与编译证据设置原生架构}"
+: "${C550_ARCH:?Set the native architecture from local device and compilation evidence}"
 "$MACA_PATH/mxgpu_llvm/bin/mxcc" \
   -x maca -O3 --offload-arch="$C550_ARCH" \
   --maca-path="$MACA_PATH" probe.cpp -o probe
 ```
 
-`--offload-arch` 的参数拼写与支持范围以本地 `mxcc --help` 和成功编译日志为准。网上[发布说明][release-changes]将 `-offload-arch=native` 列在 3.7.0 的变化中；因此不把它作为宿主 3.5.3 的默认命令。原生目标不能从 `torch.cuda.get_device_capability()` 或 Triton 的 `arch=80` 推导。
+Check the spelling and supported values of `--offload-arch` against local `mxcc --help` and successful build logs. The online [release notes][release-changes] list `-offload-arch=native` among the 3.7.0 changes; it is therefore not this page's default for the 3.5.3 host. Do not derive the native target from `torch.cuda.get_device_capability()` or Triton's `arch=80`.
 
-## 512-thread 函数属性与运行时重编译
+## The 512-thread function attribute and runtime recompilation
 
-[运行时指南 3.5.3.x §4.3][runtime-cache]给出一个未标注 `__launch_bounds__`、以每 block 1024 线程执行的 vector-add 示例，并说明该例因 block 超过 512 而触发重编译和 binary cache。这支持在本机测试“默认编译产物与较大 block 的运行时路径是否不同”，不支持把 trace 中的 `max_block_size=512` 直接解释为设备的最大线程数，也不保证 1024 线程更快。
+[Runtime guide 3.5.3.x §4.3][runtime-cache] gives a vector-add example with no `__launch_bounds__` annotation and 1024 threads per block. It states that this example triggers recompilation and binary caching because the block exceeds 512 threads. This motivates a local comparison between the default compiled function and its larger-block runtime path. It does not make the trace field `max_block_size=512` a device limit or guarantee that 1024 threads are faster.
 
-[同版本 §4.4][runtime-env]定义 `MACA_CACHE_PATH` 指定二进制缓存目录，默认位置为用户目录下的 `.metax/shadercache/`；`MACA_CACHE_DISABLE=1` 禁用缓存，设为 0 或不设置则启用。实验可为新运行指定独立目录，保留首次执行前后的目录清单、函数属性、完整输出与 host 计时，再在同一缓存目录启动后续进程。目录变化与首发延迟是重编译假说的线索；要确认发生了编译，还需运行时日志或产物等直接证据。此处的 binary cache 是编译缓存，不能当作 L2/HBM 缓存控制。
+[The same version's §4.4][runtime-env] defines `MACA_CACHE_PATH` as the binary-cache directory, defaulting to `.metax/shadercache/` under the user's home directory. `MACA_CACHE_DISABLE=1` disables that cache; 0 or an unset variable enables it. A new run can use an isolated cache directory and retain directory listings, function attributes, full outputs, and host timing before and after its first execution, then launch later processes against that same directory. File changes and first-launch delay are clues for a recompilation hypothesis; runtime logs or artifacts are needed to establish compilation directly. This binary cache is a compilation cache, not an L2/HBM cache-control mechanism.
 
-本轮公开文档检索尚未找到适用于当前 MXCC 的 `__launch_bounds__` 完整语义定义，尤其是第二参数的处理方式和超过显式第一参数时的行为。保留本机头文件、编译诊断和受控运行证据后再作结论，不直接套用 CUDA 或 HIP 的定义。
+The public-document search in this round did not find a complete `__launch_bounds__` definition applicable to the current MXCC, particularly treatment of its second parameter and behavior above an explicit first parameter. Retain installed headers, compilation diagnostics, and controlled execution evidence before drawing conclusions. Do not substitute CUDA or HIP definitions.
 
-## 动态 shared 容量的后继控制入口
+<a id="动态-shared-容量的后继控制入口"></a>
 
-官方 [Runtime API 参考3.5.3.x 的 `mcLaunchKernel`][dynamic-launch] 将 `sharedMemBytes` 定义为此次kernel启动请求的动态共享内存字节数，并说明它支持外部共享声明；[编程指南][extern-shared]给出了 `extern __shared__` 的语法入口。可以据此设计同一kernel、同一行距下仅改变动态预留容量的对照，但仍需本机编译、实际资源和正确性验证。
+## Dynamic shared-memory capacity as a follow-up control
 
-[属性参考][dynamic-attributes]区分静态shared用量与动态shared的最大允许值：静态值不包含此次launch的动态请求，最大允许值也不是实际请求量。[设置上限的接口][dynamic-limit]要求动态上限与静态shared之和不超过设备声明的每block上限。这里不引入CUDA的默认48KiB，也不把分配容量或occupancy API的预测当成实测驻留。
+The official [Runtime API reference 3.5.3.x entry for `mcLaunchKernel`][dynamic-launch] defines `sharedMemBytes` as the dynamic shared-memory bytes requested for that launch and supports external shared declarations. The [programming guide][extern-shared] provides the `extern __shared__` syntax. These interfaces support a same-kernel, same-pitch comparison that changes only the requested dynamic reservation, subject to local compilation, resource observations, and correctness checks.
 
-## 64-lane collective 的接口与实测范围
+The [attribute reference][dynamic-attributes] distinguishes static shared usage from the maximum permitted dynamic allocation: the static value excludes the launch's dynamic request, and the maximum is not the actual request. The [limit-setting interface][dynamic-limit] requires the dynamic maximum plus static shared memory to remain within the device-declared per-block limit. Do not import a CUDA default of 48 KiB or treat requested capacity or occupancy-API predictions as measured residency.
 
-2026-10-08 核对了官方 C++ 指南的活动版本选择器为3.5.3.x。[Shuffle 章节][cpp-shuffle]声明 `__shfl_sync(unsigned long mask, T value, int srcLane, int width=warpSize)`：width是合法的二次幂子组宽度；直接索引超过组宽时按`srcLane % width`选择组内源。mask中的线程必须活跃并匹配调用，源线程也必须参与。[整数归约][cpp-reduce]声明`__reduce_add_sync(unsigned long mask, int value)`及unsigned int版本。
+<a id="64-lane-collective-的接口与实测范围"></a>
 
-本库已在完整64/128线程block上验证直接shuffle与整数求和，所有参与线程都保存输出，逻辑尾部补0且无线程提前退出；[wave64实测页](../wiki/wave-collectives.md)列出准确范围和全部实际输出。[同步章节][cpp-sync]单独声明`__syncwarp`的内存顺序保证，不能用寄存器shuffle代替shared-memory同步。
+## 64-lane collective contracts and measured scope
 
-官方页面仍是系列接口契约；本机已另行核对64-bit mask类型、安装头文件和该探针的编译执行。down-shuffle越界说明、xor正文措辞及vote mask类型存在不协调之处，没有据此推导未测边界。安装头文件中的不同mask参数类型已由[独立后继对照](../wiki/wave-collectives.md#后继两种完整typed-mask选择不同归约入口)验证：当前SDK的unsigned完整32-bit入口按32元素分组，unsigned long完整64-bit入口按64元素分组。物理wave仍为64；其他mask值、参与模式和版本不在这一结论范围。
+On 2026-10-08, the official C++ guide's active version selector was verified as 3.5.3.x. Its [shuffle section][cpp-shuffle] declares `__shfl_sync(unsigned long mask, T value, int srcLane, int width=warpSize)`: width is a valid power-of-two subgroup width, and direct source indices beyond that width select `srcLane % width` within the subgroup. Masked threads must be active and make matching calls; the source thread must also participate. The [integer reduction section][cpp-reduce] declares `__reduce_add_sync(unsigned long mask, int value)` and its overload for an unsigned-int value.
 
-## 原生WMMA入口与已观测的数值边界
+This repository has checked direct shuffle and integer sums on complete 64/128-thread blocks, saving every participating thread's outputs. Logical tails supply zero and no thread exits early. The [wave64 results](../wiki/wave-collectives.md) specify the tested scope and retain every actual output. The [synchronization section][cpp-sync] separately states the memory-order guarantee of `__syncwarp`; register shuffle is not a substitute for shared-memory synchronization.
 
-本机3.5.3编译器资源头`__clang_maca_mma_functions.h`提供`mxmaca::wmma`。官方示例的`mma.h`在cu-bridge路径下，不能省略包含链核对。当前FP16→float累加重载使用四参数`mma_sync`；不为它补造通用说明中出现的satf参数。native `-x maca` probe已编译执行，但其严格dyadic exact合同失败，见[完整数值诊断](../wiki/wmma-exactness.md)。float fragment的类型声明不能替代内部舍入保证。[后继设备输入回读与scalar控制](../wiki/wmma-exactness.md#后继设备输入快照与标量fp32源码对照)在捕获边界上观察到输入一致、scalar精确、WMMA重现残差；这缩小到当前WMMA路径，仍不唯一指向硬件。
+The official page remains a family-level interface contract. The local investigation separately checked the 64-bit mask type, installed headers, compilation, and execution. Inconsistencies in down-shuffle boundary wording, XOR descriptions, and vote-mask types were not used to infer untested behavior. An [independent follow-up](../wiki/wave-collectives.md#successor-full-typed-masks-select-different-reduction-interfaces) tested the installed mask-type overloads: the current SDK's full unsigned 32-bit mask operates on 32-element groups, while its full unsigned-long 64-bit mask operates on 64-element groups. The physical wave remains 64. Other mask values, participation patterns, and software versions are outside that result.
 
-另一次CPU-only元数据查询在现有containerd环境中观察到Torch2.10.0与Triton3.6.0、包后缀metax3.8.0.4.c600u。它不是宿主3.5.3测试环境，当前wiki尚未在该容器执行或资格化矩阵kernel；以下网上mcTriton3.0源码观察也不能替代该安装的backend审查。
+## Native WMMA interface and observed numerical limits
 
-## mcTriton 源码事实
+The local 3.5.3 compiler resource header `__clang_maca_mma_functions.h` provides `mxmaca::wmma`. The official example's `mma.h` is on the cu-bridge path, so the include chain must be checked. The current FP16-to-float-accumulator overload uses four-argument `mma_sync`; do not invent a `satf` parameter from the generic description. The native `-x maca` probe compiled and ran, but failed its strict exact-dyadic contract; see the [complete numerical diagnosis](../wiki/wmma-exactness.md). A float fragment type does not establish internal rounding guarantees. The [device-input readback and scalar follow-up](../wiki/wmma-exactness.md#successor-device-input-snapshots-and-a-scalar-fp32-source-control) observed matching inputs at the captured boundaries, exact scalar results, and recurring WMMA residuals. This narrows the investigation to the tested WMMA path without uniquely attributing the cause to hardware.
 
-[Python driver][triton-driver] 在 target 中保留 backend 名 `maca`，并使用 64-lane 组；launcher 将 `num_warps` 乘以 64 作为 block 的线程数。[C driver][triton-driver-c]另有兼容 capability 映射：设备 `major=10/15/16` 分别映射为 `80/86/89`。这些是该源码版本的接口实现，不能当作 NVIDIA compute capability 或 C550 原生 ISA 型号。
+A separate CPU-only metadata query found Torch 2.10.0 and Triton 3.6.0 with the package suffix `metax3.8.0.4.c600u` in an existing containerd environment. That is not the host 3.5.3 test environment. This wiki has not executed or qualified a matrix kernel in that container. The online mcTriton 3.0 observations below likewise do not replace inspection of that installation's backend.
 
-[compiler.py][triton-compiler]的阶段是：
+## mcTriton source observations
+
+The [Python driver][triton-driver] keeps the backend name `maca` and uses 64-lane groups; its launcher computes block threads as `64 * num_warps`. The [C driver][triton-driver-c] separately maps device `major=10/15/16` to compatibility capabilities `80/86/89`. These are interface choices in that source version, not NVIDIA compute capabilities or C550 native ISA identifiers.
+
+The stages in [compiler.py][triton-compiler] are:
 
 ```text
-Triton → TTIR → TTGIR → LLVM 方言 MLIR → LLVM IR → mcfatbin
+Triton → TTIR → TTGIR → LLVM dialect MLIR → LLVM IR → mcfatbin
 ```
 
-源码允许 `num_warps` 为 1、2、4、8、16，默认值为 4；声明 `num_stages` 默认值 3，并有 `basic` 和 `cpasync` 等 pipeline 路径。选项通过 Python 检查只说明其被软件接受；形状、类型和具体 pipeline 的可编译性、正确性及性能仍需分别测试。首次实验先用默认配置建立可复现基线。
+The source admits `num_warps` values 1, 2, 4, 8, and 16, with default 4. It declares default `num_stages=3` and pipelines including `basic` and `cpasync`. Passing Python option checks establishes software admission only. Compilation, correctness, and performance still need separate checks for each shape, type, and pipeline. Start with default options to establish a reproducible baseline.
 
-[triton_metax.cc][triton-codegen]调用 MXCC 的 `--fatbin` 路线，带有 `-maca-link -input-is-device`，并链接 MACA bitcode 库。可用的源码调试开关包括：
+[triton_metax.cc][triton-codegen] invokes MXCC's `--fatbin` route with `-maca-link -input-is-device` and links MACA bitcode libraries. Source-level diagnostic switches include:
 
 ```sh
 TRITON_PRINT_COMPILE_OPTIONS=1
 TRITON_COMPILER_DUMP_ALL=1
 ```
 
-第一个开关打印编译命令，第二个在 MXCC 命令中加入 `--keep`。它们只有在本机 backend 保留相应实现时才有效。启用时将缓存及中间产物放在当前实验目录，避免把旧目标的缓存误记为新编译结果。网上 README 的构建流程需要另取 `metax_llvm`；本页不要求替换现有 SDK 或重建已有 wheel。
+The first prints compilation commands; the second adds `--keep` to MXCC. They work only if the installed backend retains these implementations. Keep caches and intermediate artifacts in the current experiment directory so another target's old cache is not mistaken for a new compilation result. The online README's build process requires a separate `metax_llvm` package; this page does not require replacing the installed SDK or rebuilding an existing wheel.
 
-## 计时与 profiler 的证据范围
+## Timing and profiler evidence
 
-MACA 提供事件计时 API，官方例子将开始/结束事件放在 kernel 两侧，等待结束事件后查询间隔；[vLLM-metax 的实际包装][kernel-timer]也使用这条路线。实验须说明是否批量执行、预热次数、同步位置、输入准备和输出传输是否在计时内，并保留每次样本。短 kernel 的事件均摊值不能直接解释为纯指令延迟。
+MACA provides event-timing APIs. The official example places start/end events around a kernel, waits for completion, then reads their interval; [vLLM-metax's timing wrapper][kernel-timer] uses the same route. State batching, warmup count, synchronization points, and whether input preparation or output transfer is timed. Retain every sample. An amortized event time for a short kernel is not a pure instruction latency.
 
-缓存重置需要独立说明。没有验证过重置方法时，结果应标注“缓存状态未控制”或实际采用的热复用条件，不能声称冷 L2 或 HBM 测量。发布说明中的驱动优化项也不能代替当前进程的缓存状态证据。
+Describe cache reset separately. Until the reset method is verified, label the cache state uncontrolled or state the actual warm-reuse policy; do not claim cold-L2 or HBM measurements. Driver optimization notes do not establish the cache state of the current process.
 
-[mcProfiler 手册][profiler]提供性能计数器采集入口；[mxvs 手册][mxvs]覆盖设备、链路、内存和算力工具。当前资料核查没有验证 C550 所装 profiler 的 CLI、指标、权限或采集结果。后续应保存工具版本、原始帮助、采集命令、指标定义和成功输出；工具不可用时明确记录覆盖缺口，保留正确性及计时结果。
+The [mcProfiler manual][profiler] provides a counter-collection entry point; [mxvs][mxvs] covers device, link, memory, and compute tools. This source review has not validated the installed C550 profiler's CLI, counters, permissions, or capture results. Retain tool version, original help, commands, metric definitions, and successful output when testing it. If unavailable, report the coverage gap and preserve the correctness and timing records.
 
-[mcTracer 3.5.3.x 采集章节][tracer]说明工具导出 JSON，[Viewer 章节][tracer-viewer]说明由专用 UI 打开。已查阅这两个章节，未找到 JSON `ts` / `dur` 字段的单位契约。安装的 MCPTI 头文件对上游时间戳的注释不能证明 exporter 没有转换单位；在取得导出实现或明确契约前，保留原始数值与“单位未验证”标记。已采集 trace 的范围与验收见 [profiling 页面](../wiki/profiling.md)。
+The [mcTracer 3.5.3.x capture chapter][tracer] describes JSON output, and the [Viewer chapter][tracer-viewer] describes opening it in the dedicated UI. Neither inspected chapter supplied a unit contract for exported JSON `ts` / `dur`. Comments on upstream timestamps in installed MCPTI headers do not establish whether the exporter transforms their units. Retain raw values and an unverified-unit label until the export implementation or an explicit contract is available. See the [profiling page](../wiki/profiling.md) for the captured trace's scope and content checks.
 
 [runtime]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/index.html
 [runtime-legacy]: https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html

@@ -1,5 +1,7 @@
 # Complete wave64 integer collectives
 
+[Home](../../README.md) · [Measured findings](../../wiki/wave-collectives.md)
+
 Question: on the measured C550 installation, do direct-index shuffle and exact
 integer reduction preserve the documented subgroup boundaries at lanes 31/32/63
 and across two complete physical wave64 groups? The retained

@@ -1,94 +1,96 @@
-# 实验与知识维护方法
+# Experiment and knowledge-maintenance methods
 
-本库积累 C550 上可以检验的优化知识。每一页应说明所要减少的代价、具体改写、语义约束、适用条件、可能退化的情形及现有证据覆盖范围。先记录来源，再形成结论；设备型号相同仍不能省略软件版本、输入与测量合同。
+[Home](../README.md)
 
-## 证据分层
+This repository develops testable optimization knowledge for C550. Each page should identify the cost to reduce, the concrete rewrite, semantic constraints, conditions for use, possible regressions, and the evidence available. Record sources before drawing conclusions. Even when the device model is unchanged, retain software versions, inputs, and the measurement contract.
 
-知识可信度与实验覆盖范围分别记录，不能以一个标签代替完整条件。
+## Evidence categories
 
-| 知识标签 | 含义 |
+Record knowledge confidence separately from experimental coverage. A label does not replace the conditions under which a statement holds.
+
+| Knowledge label | Meaning |
 |---|---|
-| `documented` | 一手文档明示的机制或 API 约定 |
-| `source-reported` | 源码、作者或问题报告中的观察；未自动成为本机事实 |
-| `inferred` | 从已有事实推导的解释；列出依据和仍需排除的解释 |
-| `experimental` | 待验证的设计、假设或候选 |
-| `locally-measured` | 在明确设备、软件、输入和合同内保留记录的本地测量 |
+| `documented` | A mechanism or API contract explicitly stated by a primary source |
+| `source-reported` | An observation in source code, an author's account, or an issue report; it does not automatically become a local fact |
+| `inferred` | An explanation derived from existing facts; state its basis and alternatives still to exclude |
+| `experimental` | An unverified design, hypothesis, or candidate |
+| `locally-measured` | A retained local measurement with an explicit device, software stack, input, and contract |
 
-`evidence_scope` 使用 [catalog](../data/catalog.json) 与[检索工具](../scripts/wiki.py)支持的同一组值：
+Use the same `evidence_scope` values supported by the [catalog](../data/catalog.json) and [query tool](../scripts/wiki.py):
 
-| 范围 | 含义 |
+| Scope | Meaning |
 |---|---|
-| `external-observation` | 其他记录中的观察或环境检查，尚未成为本库的测量结果 |
-| `upstream-source` | 上游文档或源码支持的内容 |
-| `protocol` | 实验设计与测量约定，尚未构成设备结果 |
-| `compile-only` | 编译阶段的结果，不承担执行正确性或速度声明 |
-| `device-correctness` | 给定输入与合同下的设备正确性结果 |
-| `local-measurement` | 带有结果记录的本地测量，按记录中的条件解释 |
+| `external-observation` | An observation or environment check from another record, not yet a measurement in this repository |
+| `upstream-source` | Content supported by upstream documentation or source code |
+| `protocol` | An experimental design or measurement contract that does not yet constitute a device result |
+| `compile-only` | Compilation evidence, with no execution-correctness or speed claim |
+| `device-correctness` | A device-correctness result for specified inputs and a specified contract |
+| `local-measurement` | A local measurement with a result record, interpreted within that record's conditions |
 
-环境和编译记录不承担速度声明；有配对比较时，结果正文说明 baseline、两侧源码、相同输入、精度和计时范围。局部通过不升级为一般硬件保证，组件收益不升级为端到端收益。失败或被替代的状态记在原记录的说明中，不另建一套范围枚举。
+Environment and compilation records do not support speed claims. A paired comparison must identify its baseline, both source versions, common inputs, precision, and timing interval. A bounded pass is not a general hardware guarantee, and a component improvement is not an end-to-end improvement. Record failures and superseded states in the original record's explanation rather than creating another scope enumeration.
 
-文档读取日期、文档发布日期和软件版本分开记录。读到可变的 `main`、`master` 或官网页面时明确标记可变；优先使用实际读取的固定提交，不补猜版本。源码中的兼容名称与物理硬件身份分开记录。
+Keep the retrieval date, source publication date, and software version separate. Mark references to mutable `main`, `master`, or official web pages as mutable. Prefer the fixed commit actually inspected; do not guess a version. Distinguish compatibility names in software from physical hardware identity.
 
-## 每轮运行前固定的内容
+## What to freeze before each run
 
-1. 写明一个可检验的问题及比较对象，如连续 copy 的批内设备时间如何随数据量变化。先定义成功、失败和终止条件。
-2. 记录设备名称及可获取的身份属性、驱动、运行时、编译器版本、编译命令、源码提交、进程与设备选择。无法确定的字段写 `unknown`。
-3. 固定 shape、dtype、布局/stride、分配方式、输入生成、seed、外部 oracle、容差及计时边界。改变合同要写成新的运行。
-4. 按安装的 `gpu-infra` skill 执行适用于当前后端的分配与释放流程，记录实际 owner、设备选择、共享锁或租约及可见进程检查。采用合作式 `local_serialized` 时，只声明参与该 broker 的作业按设备锁串行化；进程快照未观察到任务不等于整机独占，也不补造独占回执。
-5. 先完成编译和可在主机验证的合同检查，再进行有界设备运行。本探针同时保留原始计时与最终输出；退出设备进程后完成 CPU oracle 检查，通过前不接纳任何计时为有效结果。错误返回、异常、超时与失败用原样记录；重试写新记录，不覆盖原失败。
+1. State one testable question and its comparison, such as how batched device time for contiguous copy varies with data size. Define success, failure, and stopping conditions first.
+2. Record the device name and available identity properties, driver, runtime, compiler version, compilation command, source commit, process, and device selection. Use `unknown` for undetermined fields.
+3. Fix shape, dtype, layout/stride, allocation method, input generation, seed, external oracle, tolerance, and timing boundaries. A changed contract requires a new run.
+4. Follow the installed `gpu-infra` skill's allocation and release procedure for the backend. Record the actual owner, selected device, shared lock or lease, and visible-process checks. Under cooperative `local_serialized` allocation, claim only that participating broker jobs serialize through the device lock. An empty process snapshot does not establish whole-machine exclusivity; do not invent an exclusive-allocation receipt.
+5. Complete compilation and host-side contract checks before bounded device execution. The probe retains raw timings and final outputs. Run the complete CPU oracle after the device process exits, and accept no timing result before correctness passes. Preserve errors, exceptions, timeouts, and failures as observed. A retry creates a new record and never overwrites the failure.
 
-原始运行目录留在源码仓库和已安装技能之外。每轮至少保存执行源文件、命令、环境、标准输出和错误、逐项数值检查及原始计时样本。文档更新无需重新占用 GPU；语义或计时实现有变化时才重跑对应验证。
+Keep raw run directories outside the source repository and installed skills. Each run must retain at least the executed source, commands, environment, stdout/stderr, elementwise correctness checks, and raw timing samples. Documentation changes need no GPU allocation. Rerun the relevant validation only when semantics or timing implementation changes.
 
-## 首批 native 探针的范围
+## Scope of the initial native probes
 
-| 探针 | 要回答的问题 | 必须保留的边界 |
+| Probe | Question | Required boundary |
 |---|---|---|
-| 设备属性与最小编译运行 | 当前运行时实际报告哪些属性，编译器能否生成并运行目标代码 | API 返回值与硬件官方保证分开；未提供的属性不补默认值 |
-| 连续 copy | 不同工作集和 block 配置下，完整 copy kernel 的设备批次时间如何变化 | 正确性覆盖尾部；区分逻辑读写量与真实硬件事务量 |
-| stride copy | 给定读写 stride 如何影响本探针的访问效率 | 说明 stride 单位、分配 span、有效元素数、输出布局与边界检查 |
-| 空/最小 kernel 批次 | 小 kernel 的设备批次平均时间和 host 提交成本各是多少 | event 区间不能独自测出纯 host launch overhead；两种时间单独报告 |
+| Device properties and minimal compile/run | Which properties does this runtime report, and can the compiler generate and execute target code? | Separate API observations from official hardware guarantees; do not default missing properties |
+| Contiguous copy | How does complete-copy kernel batch time vary with working set and block configuration? | Check tails; distinguish logical read/write volume from actual hardware transactions |
+| Strided copy | How does the specified read/write stride affect this probe's access efficiency? | State stride units, allocation span, valid element count, output layout, and bounds checks |
+| Empty/minimal kernel batches | What are the average device batch time and host submission cost for small kernels? | An event interval alone cannot measure pure host launch overhead; report the two times separately |
 
-这些是实验设计，不是已完成结果。它们不能证明 GEMM、矩阵指令、原子操作、归约、通信、完整模型或所有 dtype 已受支持。设备名和 MACA 版本必须由本轮环境记录绑定；即使首次发现某版本，也不将其写成永久基线。
+These are experimental designs, not completed results. They do not establish support for GEMM, matrix instructions, atomics, reductions, communication, complete models, or every dtype. Bind the device name and MACA version to each run's environment record. The first observed version is not a permanent baseline.
 
-## 计时合同
+## Timing contract
 
-先固定一条 stream（首轮原生探针使用 default stream），在计时前创建并初始化 event、完成内存分配、输入拷贝、编译与预热。保存所用 MACA API 及其版本；计时含义以该版本 API 文档和本轮探针为依据。
+Start with one fixed stream; the initial native probe uses the default stream. Create and initialize events, allocate memory, copy inputs, compile, and warm up before timing. Retain the MACA API and version used. Interpret timing through that version's API documentation and the actual probe.
 
-设备批次计时应在同一 stream 中按顺序放置起点 event、固定次数 kernel 提交和终点 event，等待终点完成后读 event 时间。保存每个批次的原始耗时与重复次数。`批次耗时 / kernel 次数` 是该合同下的批内平均设备时间，可能含 stream 间隙、提交供给不足及 event 边界开销，不直接称为单次 kernel 纯执行时间或纯 launch latency。
+For device batch timing, enqueue a start event, a fixed number of kernel launches, and an end event in order on the same stream. Wait for the end event before reading elapsed time. Save every raw batch duration and repetition count. `batch duration / kernel count` is the mean time per launch within that contract. It may include stream gaps, insufficient host submission rate, and event-boundary overhead; do not call it isolated kernel execution time or pure launch latency.
 
-host 侧另用单调时钟记录需要的边界：只包提交循环时称 host 提交时间；包含终点同步时称 host 完成时间。若比较同步与异步入口，先说明两者返回时是否完成计算。不得将 host 时间、event 时间及 profiler 时间拼成同一个指标。
+Use a separate host monotonic clock for the required boundary. A clock around the submission loop measures host enqueue time; one that includes completion synchronization measures host completion time. Before comparing synchronous and asynchronous interfaces, state whether computation is complete when each returns. Do not combine host, event, and profiler times into one metric.
 
-预热与计时分开。配对比较交错 baseline/candidate 的次序，或预先随机化次序并保存它；必要时用独立进程观察跨进程变化。报告批次数、每批重复数、全部原始样本和 median [min, max]。一批里的多次 kernel 不是同等数量的独立样本；极少数批次不报告有统计代表性的 p95。
+Separate warmups from measured samples. Interleave baseline/candidate order or randomize it in advance and retain the order. Use independent processes when needed to examine process-to-process variation. Report batch count, launches per batch, all raw samples, and median [min, max]. Repeated kernels within one batch are not independent samples. Do not present p95 from very few batches as statistically representative.
 
-记录每个样本前的设备状态处理。应用没有显式刷新不等于运行时没有刷新。MACA 的启动模式可能影响 cache 策略；记录 `MACA_LAUNCH_MODE`、`MACA_LAUNCH_BLOCKING`、`MACA_DIRECT_DISPATCH` 的值或未设置状态，并在未核验时标为运行时策略未知。大工作集本身不证明冷缓存。复用同一输入的重复 kernel 是特定复用条件下的测量。记录可获得的频率、功耗/温度及并发状态；无法锁频或无法证明独占时保留该限制。清理 allocator 不声称刷新 GPU cache。
+Record device-state handling before each sample. No explicit application cache flush does not prove that the runtime performs none. MACA launch mode can affect cache policy: retain the values or unset state of `MACA_LAUNCH_MODE`, `MACA_LAUNCH_BLOCKING`, and `MACA_DIRECT_DISPATCH`, and label the runtime policy unknown until checked. A large working set alone does not establish cold-cache conditions. Repeated kernels on the same input measure a particular reuse condition. Record available clock, power, temperature, and concurrency observations; retain limitations when clocks are not locked or exclusivity is unproven. Allocator cleanup is not evidence of a GPU cache flush.
 
-如果后续采集 profiler，采集与无采集计时分开保存。工具启动成功、trace 文件存在、trace 可解析、有有效 kernel 和指标各是独立检查；没有解析结果时只声明采集状态，不推断瓶颈。
+Keep later profiler captures separate from unprofiled timings. Successful tool startup, file creation, parseable trace data, valid kernel events, and usable counters are separate checks. Without parsed evidence, report collection status only and do not infer a bottleneck.
 
-## 数值与字节量
+## Numerical correctness and byte counts
 
-copy 的基准比较所有有效元素，覆盖小输入、非整 block 尾部及所研究的 stride。输入应能区分元素位置，避免常数输入掩盖错误寻址。为具有精确复制语义的类型使用精确比较；如测试 NaN 位模式或别名，先明确合同并使用适当的按位检查。分配跨度按索引上界计算，不能仅按有效元素数分配。保留 guard/sentinel 等越界检查及未覆盖的别名行为。
+Check every valid copy output, including small inputs, incomplete blocks, and the studied strides. Inputs should distinguish positions so constant data cannot hide addressing errors. Use exact comparison for exact-copy semantics. Define the contract before testing NaN bit patterns or aliasing, and use suitable bitwise checks. Allocate from the maximum accessed index, not just the number of valid elements. Retain guard/sentinel checks and state untested aliasing behavior.
 
-copy 的有效带宽按预先定义的逻辑字节量计算。若每个有效元素恰好读一次、写一次，元素数为 `N`、每元素字节为 `s`，则逻辑读写量是 `2*N*s`，十进制 `GB/s = 2*N*s / seconds / 1e9`。stride 另报实际分配 span；不要把空洞也计入有用流量。该指标不等于 DRAM 实测带宽，也不证明缓存命中率、总线事务量或广告峰值利用率。
+Compute effective copy bandwidth from a predefined logical byte count. If each valid element is read once and written once, `N` elements of `s` bytes imply `2*N*s` logical bytes, with decimal `GB/s = 2*N*s / seconds / 1e9`. Report the actual allocation span separately for strided cases; holes are not useful traffic. This metric is not measured DRAM bandwidth and does not establish cache hit rate, bus transactions, or utilization of an advertised peak.
 
-扩展到归约、近似函数或矩阵计算时，先固定中间累加精度、舍入、误差度量和外部 oracle。输出 dtype 相同不足以证明计算合同相同。先保留不正确或变慢的输入，再讨论适用条件，不能用派发谓词隐藏失败。
+Before extending to reductions, approximate functions, or matrix arithmetic, fix intermediate accumulation precision, rounding, error metrics, and the external oracle. Equal output dtype does not establish equal computation contracts. Retain incorrect or slower inputs before discussing conditions of use; do not hide failures behind dispatch predicates.
 
-## 从结果到知识页
+## From results to knowledge pages
 
-结果行至少能回答：设备/版本、问题、shape/dtype/布局、baseline 与候选、正确性、计时范围、原始样本、状态处理、profiler 覆盖、artifact 引用和未覆盖范围。负结果可以成为有效知识；一个没有支持的参数建议不能仅凭“经验”获得默认地位。
+A result must identify the device/version, question, shape/dtype/layout, baseline and candidate, correctness, timing interval, raw samples, state handling, profiler coverage, artifact references, and uncovered scope. Negative results can be useful knowledge. An unsupported parameter recommendation does not become a default through experience alone.
 
-机制页按以下顺序写成简短因果说明：原方案主要付出什么代价；改写改变了什么；成立需要什么条件；可能新增哪些代价；本机观察支持到哪里。精确数值与完整配置放在拥有它的实验记录中，正文只保留决定适用性的观察并链接来源。同一机制优先更新原页，不为数量建立空页。
+Write mechanism pages as short causal explanations: the original cost, what the rewrite changes, its preconditions, possible new costs, and the extent of local support. Keep precise values and full configurations in the owning experiment record. The page should retain the observations that determine applicability and link to their sources. Update the existing page for a mechanism rather than adding empty pages to increase a count.
 
-被推翻的观察保留原记录，在说明中写清失效或被替代的原因和后继运行 ID。保持工具缺陷、输入错误、编译限制、性能假设和硬件能力的归属清晰。无直接对照时不写“更快”或“最佳”。
+Preserve refuted observations in their original records. Explain why they became invalid or were superseded, and identify the successor run. Distinguish tool defects, input errors, compilation limits, performance hypotheses, and hardware capabilities. Without a direct comparison, do not claim that a choice is faster or best.
 
-## 本地维护验收
+## Local maintenance checks
 
-提交前运行 `python3 scripts/wiki.py validate`。当前校验器检查 catalog schema、唯一 ID、必需字段、证据标签及页面路径。`locally-measured` 表明观测来自本机，其结果必须存在并包含运行、源码、设备、环境、正确性、测量和限制字段。以下两种范围分别准入：
+Run `python3 scripts/wiki.py validate` before committing. The current validator checks catalog schema, unique IDs, required fields, evidence labels, and page paths. `locally-measured` means an observation came from the local device; its result must exist and contain run, source, device, environment, correctness, measurement, and limitation fields. The two scopes have separate admission rules:
 
-- `local-measurement` 保留性能证据的严格门槛：完整输出检查的 `correctness.passed` 必须为布尔值 `true`。诊断标记不能让失败结果通过这一门槛。
-- `device-correctness` 可以记录直接测得的正确性通过或失败：结果自身的 `evidence_scope` 必须同为 `device-correctness`，`correctness.passed` 必须为实际布尔值，并用非空 `correctness.tested_contract` 明示检验的合同。同时要求 `measurement.purpose="correctness_diagnostic"` 和 `measurement.performance_accepted=false`；其中的计时记录不被接纳为性能结论。
+- `local-measurement` retains the strict performance-evidence gate: full-output `correctness.passed` must be the Boolean `true`. Diagnostic labels cannot make a failed result pass this gate.
+- `device-correctness` can record directly measured correctness passes or failures. The result's own `evidence_scope` must also be `device-correctness`; `correctness.passed` must be an actual Boolean; and a nonempty `correctness.tested_contract` must state the tested contract. It also requires `measurement.purpose="correctness_diagnostic"` and `measurement.performance_accepted=false`. Its timing records are not accepted as performance conclusions.
 
-因此，明确违反原合同的设备输出可以成为本地实测的负面知识。原结果仍是失败，原 oracle 和容差仍有效；为索引诊断记录而改变证据分类不意味着数值验收通过，也不授权调整容差或复用失败运行的性能数据。
+Device outputs that violate the original contract can therefore become locally measured negative knowledge. The original result remains failed, with its oracle and tolerance unchanged. Classifying a diagnostic record for retrieval does not establish numerical acceptance, authorize a tolerance change, or permit performance claims from the failed run.
 
-对受影响条目执行实际的 `search` 与 `show`，例如 `python3 scripts/wiki.py search timing` 和 `python3 scripts/wiki.py show maca-event-timing`。由维护者核对来源支持、正文与结果一致性、编译记录是否误带速度声明，以及配对比较是否缺少 baseline；这些人工检查不记成校验器已经实现的能力。
+Exercise `search` and `show` for affected entries, for example `python3 scripts/wiki.py search timing` and `python3 scripts/wiki.py show maca-event-timing`. A maintainer must check source support, agreement between prose and results, accidental speed claims from compilation records, and missing baselines in paired comparisons. Do not describe these manual checks as implemented validator capabilities.
 
-结构校验不打开或验证仓库外原始实验，不证明性能真实性、持续 custody、独占资源或正式资格。仅元数据变更不触发 GPU 作业，也不作为外部发布的额外授权。无需例行计算或列举摘要；使用运行 ID、路径与提交定位来源。
+Structural validation does not open or verify raw experiments outside the repository. It does not prove performance validity, continuing custody, exclusive resources, or formal qualification. Metadata-only changes do not trigger GPU jobs or provide additional publication authorization. Do not compute or list digests routinely; locate evidence by run ID, path, and commit.

@@ -1,5 +1,7 @@
 # Fixed-footprint read-order experiment
 
+[Home](../../README.md) · [Measured findings](../../wiki/memory-order.md)
+
 Question: for the same input address set, allocation and logical byte count,
 how does changing the read order affect this C550 kernel's batch timing?
 This is a separate microbenchmark. Different shifts produce different output

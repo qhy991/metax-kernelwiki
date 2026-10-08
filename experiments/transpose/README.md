@@ -1,5 +1,7 @@
 # Exact FP32 transpose: direct and shared-memory tiles
 
+[Home](../../README.md) · [Measured findings](../../wiki/transpose.md)
+
 Question: on the measured C550 software stack, how do direct indexing and two
 shared-memory tiles compare for the **same** row-major transpose semantics?
 For input `A` with `rows` rows and `cols` columns, every variant must produce

@@ -1,16 +1,18 @@
-# 相同地址集合，读取排列仍会改变时间
+# Read order changes timing even with a fixed address set
 
-在本次 C550 实验中，固定输入地址集合、输入跨度、逻辑读写量和每个进程内的缓冲区地址之后，改变读取排列仍产生了明显时间差。对同一 64 MiB 输入，六进程平衡顺序复验中，`s=6` 的事件均摊时间始终高于 `s=12`，进程内比值为 **3.284 [3.258, 3.288]**。较大的相邻读取间隔并没有在本实验中对应更长的时间。
+[Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/memory_order/README.md)
 
-这排除了“只是访问了更大输入集合”对该对照的解释，但没有区分缓存复用、地址转换、事务组织、内存分区或调度等具体机制。[完整样本与复验记录](../data/results/20261008-memory-order.json)保留了这一范围。
+In this C550 experiment, changing read order produced substantial timing differences while holding the input address set, input span, logical read/write bytes and per-process buffer addresses fixed. For the same 64 MiB input, six processes with balanced order consistently observed a longer event-batch mean at `s=6` than at `s=12`. The within-process ratio was **3.284 [3.258, 3.288]**. Larger spacing between neighboring reads did not imply a longer time in this experiment.
 
-## 为什么从原来的 stride 探针继续
+A larger unique input set therefore cannot explain this control's difference. The experiment does not isolate cache reuse, address translation, transaction formation, memory partitioning or scheduling. The [complete samples and confirmation record](../data/results/20261008-memory-order.json) retain that scope.
 
-[原生 stride gather](memory-access.md)固定输出元素数，增大 stride 时同时增大了输入地址跨度。这适合观察实际 gather 的成本，却无法单独回答读取次序的影响。
+## Why extend the original stride probe?
 
-本轮将 `N` 固定为 `2^16`、`2^20` 或 `2^24`，每个规模分别测试 `s=0,2,4,6,8,12`。每个 case 都读取 `input[0..N-1]` 中每个元素恰好一次，连续写入 `output[0..N-1]`。整个进程只创建一块 input 和一块最大 output allocation，所有 case 复用相同 payload 起点。这些地址条件由冻结源码的构造与双射保证；未采集逐指令地址轨迹，也没有验证物理 DRAM 放置。
+The [native strided gather](memory-access.md) holds output count fixed but increases input span with stride. That measures the cost of those gathers, but cannot isolate the effect of read order.
 
-同一个 kernel 接收运行时参数 `N` 和 `s`，包括 `s=0`，没有切换到另一个 copy kernel。输出序号 `i` 的读地址为：
+This experiment fixes `N` at `2^16`, `2^20` or `2^24` and tests `s=0,2,4,6,8,12` at each size. Every case reads each element of `input[0..N-1]` exactly once and writes consecutive `output[0..N-1]` elements. Each process allocates one input and one maximum-sized output buffer, reusing the same payload bases across cases. The frozen source construction and the mapping's bijection establish these address properties. No per-instruction address trace or physical DRAM placement was verified.
+
+One kernel accepts runtime `N` and `s`, including `s=0`; it does not switch to a separate copy kernel. Output index `i` reads:
 
 ```text
 k = log2(N)
@@ -18,15 +20,15 @@ j = ((uint64(i) << s) | (uint64(i) >> (k-s))) & (N-1)
 output[i] = input[j]
 ```
 
-独立 CPU oracle 把 input 视为 `(N/2^s) × 2^s` 的行主序矩阵，再取转置的扁平结果，用除法和余数计算索引。例如 `N=8,s=2` 的读地址是 `[0,4,1,5,2,6,3,7]`。该映射是双射，固定了唯一地址集合与完整跨度。
+The independent CPU oracle treats the input as a row-major `(N/2^s) × 2^s` matrix and flattens its transpose, using division and remainder to compute indices. For example, `N=8,s=2` reads `[0,4,1,5,2,6,3,7]`. This bijection preserves the unique address set and full span.
 
-**不同 s 的输出排列不同。** 这是研究访问模式的参数化探针，不是把原 gather 无条件替换为另一实现的优化。完整源码、数学映射和检查步骤见 [memory_order README](../experiments/memory_order/README.md)。
+**Different s values produce different output permutations.** This is a parameterized access-pattern probe, not an unconditional replacement for the original gather. See the [memory_order README](../experiments/memory_order/README.md) for source, the mathematical mapping and checking procedure.
 
-## 首轮规模扫描
+## Initial size sweep
 
-源码 `0e093ce`，block 固定为 256，每个 case 执行 10 次预热，再测 10 个批次，每批 10 次 launch。下表是首轮固定顺序扫描的事件区间均摊中位数，单位 µs：
+Source `0e093ce` fixes block size at 256. Each case uses 10 warmups and 10 batches of 10 launches. These are median event-batch means in µs from the initial fixed-order sweep:
 
-| s | 输入 256 KiB，N=2^16 | 输入 4 MiB，N=2^20 | 输入 64 MiB，N=2^24 |
+| s | 256 KiB input, N=2^16 | 4 MiB input, N=2^20 | 64 MiB input, N=2^24 |
 | ---: | ---: | ---: | ---: |
 | 0 | 8.422 | 17.101 | 186.317 |
 | 2 | 8.474 | 17.651 | 227.072 |
@@ -35,15 +37,15 @@ output[i] = input[j]
 | 8 | 9.344 | 37.965 | 1270.310 |
 | 12 | 9.382 | 36.979 | 474.522 |
 
-每列内 input/output 地址集合与逻辑流量相同；列间改变了规模。首轮 18 个 case 的最终输出逐位检查全部通过。小规模结果也可能明显受到提交和事件边界影响，不能把这些数值解释为单条 load 或纯硬件访问延迟。
+Within a column, input/output address sets and logical traffic are fixed; columns differ in size. All final outputs of the initial 18 cases passed bitwise checking. Small cases may be strongly affected by submission and event boundaries. These values are not single-load latency or pure hardware access latency.
 
-## 六进程确认非单调次序
+## Six-process confirmation of non-monotonic timing
 
-对 `N=2^24`，预先固定了六种顺序，使每个 s 在各执行位置各出现一次，30 种有向相邻组合也各出现一次。每个独立进程先完成设备运行、退出并释放，再进行 CPU 全量检查。六个进程的 36 个 case 全部通过。
+For `N=2^24`, six predetermined orders place each s at each position once and each of the 30 directed adjacent pairs once. Each independent process completed device execution and release before full CPU checking. All 36 cases passed.
 
-先在每个进程内取十个批次的中位数，再对六个进程报告 median [min, max]：
+For each case, the analysis takes the median of ten batches within a process, then reports median [min, max] over six processes:
 
-| s | 事件均摊时间（µs） | 进程内 T(s)/T(0) |
+| s | Event-batch mean (µs) | Within-process T(s)/T(0) |
 | ---: | ---: | ---: |
 | 0 | 187.264 [186.022, 192.397] | 1.000 |
 | 2 | 226.598 [225.830, 231.898] | 1.212 [1.205, 1.217] |
@@ -52,18 +54,18 @@ output[i] = input[j]
 | 8 | 1275.462 [1268.685, 1277.952] | 6.805 [6.642, 6.857] |
 | 12 | 474.074 [473.062, 479.283] | 2.533 [2.491, 2.543] |
 
-比值在同一进程内计算，不是两组汇总中位数相除，也不是把 60 个批次当成 60 次独立复现。全部六个进程都观察到 `s=6` 比 `s=12` 慢。这里的比值是不同读取排列的时间比，不能称为原算子的加速收益。
+Ratios are computed within a process, not by dividing aggregate medians. The 60 batches are not 60 independent replications. Every process observed `s=6` slower than `s=12`. These are timing ratios between different read permutations, not speedups for the original operator.
 
-## Trace 排除了什么，仍不知道什么
+## What the traces show and what remains unresolved
 
-为预先选择的 `s=0`、`s=12` 单独采集 trace，复验后再追加 `s=6` 的诊断采集。三个运行都通过最终输出检查，各包含 110 个真实 GPU kernel event，并一致报告每线程 8 个寄存器、shared/private memory 为 0；所有已报告的重编译标志均为 false。
+Separate traces covered the preselected `s=0` and `s=12` cases. A diagnostic `s=6` capture followed confirmation. All three runs passed final-output checks and contained 110 actual GPU kernel events each. They consistently reported 8 registers per thread and zero shared/private memory; every reported recompilation flag was false.
 
-这些观测支持它们没有走到已观察的不同重编译或资源分配路径。但相同寄存器数不证明相同内存事务，也不能唯一定位瓶颈。完整地址集合固定，**短时间内的复用距离和活跃工作窗口仍会改变**；这是后续实验需要区分的因素。没有硬件计数器或受控反例时，不据此推断 cache line、bank 数、TLB 容量或 DRAM 流量。
+The observations showed no difference in the reported recompilation or resource-allocation paths. Equal register counts do not prove equal memory transactions or identify a unique bottleneck. Although the whole address set is fixed, **short-term reuse distance and the active working window still change**. These remain factors for further controls. Without hardware counters or discriminating counterexamples, the results do not identify cache-line size, bank count, TLB capacity or DRAM traffic.
 
-本轮使用一套位置可辨识的有限 FP32 输入，而非随机输入泛化集。所有 N 都整除 block256，没有尾块覆盖。计时是默认 stream 的 event 区间，可能包含 host 提交空隙；运行时数据缓存策略未验证，未锁频，也未宣称系统级独占。三个 profiler 运行的计时与普通测量分开；trace 原始时间单位仍未转换。
+The experiment uses one position-distinguishing finite FP32 input, not a random-input generalization set. Every N is divisible by block256, so no partial-block tails are covered. Default-stream event intervals can include host submission gaps. Runtime data-cache policy is unverified, clocks are not fixed and system-wide exclusivity is not claimed. The three profiled runs remain separate from ordinary timing, and raw trace units have not been converted.
 
-下一步可以在**保持同一转置结果**的条件下比较二维分块与直接访问，检查是否改变复用窗口及读写组织。那将是一项新的实现对照，必须重新保留其正确性、资源及计时证据，不能从本页直接宣布收益。
+A next implementation comparison can preserve **the same transpose result** while changing direct access to two-dimensional tiling, then test reuse windows and read/write organization. Such a comparison needs its own correctness, resource and timing evidence; this page alone establishes no implementation gain.
 
-## 后继同结果对照
+## Successor comparison with identical outputs
 
-[转置分块实验](transpose.md)已将这个问题推进为相同输出语义的实现比较，并覆盖非方形和尾部尺寸。分块的整体收益与padding的小幅变化分别记录，没有把本页不同排列的时间比当成实现加速。
+The [transpose tiling experiment](transpose.md) pursues that question with identical output semantics, including nonsquare and tail dimensions. It records whole-implementation gains separately from the smaller padding effects. It does not reuse this page's permutation ratios as implementation speedups.

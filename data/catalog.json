@@ -4,7 +4,7 @@
   "entries": [
     {
       "id": "c550-device-identity",
-      "title": "产品、设备 ISA、编译 family 与兼容架构值",
+      "title": "Product identity, native ISA, compiler family, and compatibility architecture",
       "tags": [
         "C550",
         "xcore1002",
@@ -19,12 +19,12 @@
         "https://github.com/qhy991/open-cake-ir/blob/main/docs/metax-c550-bringup.md",
         "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
       ],
-      "limitations": "一张C550的runtime/ISA观察；waveSize与warpSize为同一别名来源，不构成占用率、最大可分配显存或跨产品保证。",
+      "limitations": "Runtime and ISA observations from one C550. waveSize and warpSize share one alias source; they do not establish occupancy, maximum allocatable memory, or guarantees for other products.",
       "result": "data/results/20261007-native-01.json"
     },
     {
       "id": "maca-toolchain",
-      "title": "MACA C++ 和 mcTriton 编译路线",
+      "title": "MACA C++ and mcTriton compilation routes",
       "tags": [
         "mxcc",
         "mcfatbin",
@@ -42,11 +42,11 @@
         "https://github.com/MetaX-MACA/mcTriton",
         "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html"
       ],
-      "limitations": "上游版本与宿主安装版本分别记录；源码选项不等于 C550 性能结论。"
+      "limitations": "Upstream versions and the installed host version are recorded separately. Source options do not establish C550 performance."
     },
     {
       "id": "maca-event-timing",
-      "title": "事件批次计时、逻辑带宽与测量边界",
+      "title": "Event batches, logical bandwidth, and measurement boundaries",
       "tags": [
         "timing",
         "event",
@@ -60,19 +60,19 @@
       "sources": [
         "https://developer.metax-tech.com/api/client/document/preview/567/C500_RuntimeAPIProgrammingGuide_CN.html"
       ],
-      "limitations": "探针协议；未验证运行时缓存策略的事件区间不是 DRAM 峰值带宽或纯 launch latency。"
+      "limitations": "Probe protocol only. An event interval with unverified runtime cache policy does not establish peak DRAM bandwidth or pure launch latency."
     },
     {
       "id": "c550-native-memory-probes",
-      "title": "C550 copy 配置的四进程确认与 stride 首轮观察",
+      "title": "C550 copy configurations: four-process confirmation and initial stride observations",
       "tags": [
         "copy",
         "gather",
         "stride",
         "block",
-        "尾部",
-        "访存",
-        "性能",
+        "tails",
+        "memory access",
+        "performance",
         "C550"
       ],
       "confidence": "locally-measured",
@@ -82,19 +82,19 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
       ],
       "result": "data/results/20261007-copy-confirm.json",
-      "limitations": "copy比值仅覆盖固定规模和四个进程；gather仅单轮扫描；运行时缓存策略未验证，logical GB/s不是DRAM带宽。"
+      "limitations": "Copy ratios cover a fixed size and four processes; gather has one initial sweep. Runtime cache policy is unverified, and logical GB/s is not DRAM bandwidth."
     },
     {
       "id": "maca-trace-acceptance",
-      "title": "mcTracer 退出码陷阱、kernel 事件与未验证的导出时间单位",
+      "title": "mcTracer exit status, kernel events, and unverified exported time units",
       "tags": [
         "mcTracer",
         "profiler",
         "trace",
         "registers",
         "measurement",
-        "计时",
-        "资源"
+        "timing",
+        "resources"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "local-measurement",
@@ -103,20 +103,20 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/cbdea92d92631a5cb388916bc985a0ceab7e3f16"
       ],
       "result": "data/results/20261007-trace-02.json",
-      "limitations": "仅本版本trace；原始单位未独立验证，不换算为已校准的kernel微秒；没有缓存或DRAM性能计数器。"
+      "limitations": "Evidence applies to this trace version. Raw time units are not independently verified and are not converted to calibrated kernel microseconds. No cache or DRAM performance counters were collected."
     },
     {
       "id": "c550-launch-bounds-runtime",
-      "title": "C550 的 512 函数属性、1024-thread launch 与运行时重编译",
+      "title": "C550 function attribute 512, 1024-thread launches, and runtime recompilation",
       "tags": [
         "launch_bounds",
         "1024",
         "512",
         "JIT",
         "binary cache",
-        "编译",
-        "启动",
-        "线程块",
+        "compilation",
+        "launch",
+        "thread block",
         "C550"
       ],
       "confidence": "locally-measured",
@@ -127,11 +127,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/bc9f74832a473c197abd54da7b6bf558842ccf73"
       ],
       "result": "data/results/20261007-launch-bound-control.json",
-      "limitations": "特定C550/MXCC上的copy；首次host区间各一个新进程样本，不是泛化加速比；重编译标志是descriptor属性，缺失项不是false。"
+      "limitations": "Copy on the stated C550/MXCC environment only. Each first-launch host interval is one fresh-process observation, not a general speedup. Recompilation flags are descriptor properties; a missing flag is not false."
     },
     {
       "id": "c550-fixed-address-memory-order",
-      "title": "固定地址集合后，C550 读取排列的非单调时间与六进程复验",
+      "title": "Fixed-address read permutations on C550: nonmonotonic timings and six-process confirmation",
       "tags": [
         "memory",
         "order",
@@ -139,9 +139,8 @@
         "transpose",
         "gather",
         "stride",
-        "访问次序",
-        "访存",
-        "转置",
+        "access order",
+        "memory access",
         "C550"
       ],
       "confidence": "locally-measured",
@@ -151,26 +150,22 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/0e093ced80c1c0963186e317fe579cbfd7ae4a41"
       ],
       "result": "data/results/20261008-memory-order.json",
-      "limitations": "不同shift对应不同输出排列；固定整体跨度仍不固定短期复用窗口。六进程仅覆盖一张C550，不能唯一归因缓存/TLB/事务组织或当作原算子加速。"
+      "limitations": "Different shifts produce different output permutations. A fixed total span does not fix short-term reuse. Six processes on one C550 cannot uniquely attribute behavior to cache, TLBs, or transaction organization, or establish a speedup for the original operator."
     },
     {
       "id": "c550-transpose-tiling-padding",
-      "title": "C550转置：分块、行距与动态shared请求量的受控比较",
+      "title": "C550 transpose: controlled tiling, row-pitch, and dynamic shared-memory comparisons",
       "tags": [
         "transpose",
         "shared memory",
         "WSM",
         "padding",
         "tiling",
-        "转置",
-        "分块",
-        "共享内存",
-        "尾部",
+        "tails",
         "C550",
         "runtime pitch",
         "capacity",
-        "行距",
-        "容量",
+        "row pitch",
         "dynamic shared",
         "reservation"
       ],
@@ -184,11 +179,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/dd205257874915278a0dda4651a48352caf75642"
       ],
       "result": "data/results/20261008-dynamic-shared.json",
-      "limitations": "同一dynamic kernel拆开请求量与行距，容量响应依赖shape；请求/工具报告不等于物理分配或occupancy，static/dynamic绝对差异仍有代码生成混杂。"
+      "limitations": "One dynamic kernel separates request size from row pitch; the request-size response depends on shape. Requested or reported bytes do not establish physical allocation or occupancy. Absolute static-versus-dynamic differences remain confounded by code generation."
     },
     {
       "id": "c550-wave64-collectives",
-      "title": "C550 wave64：shuffle、归约与mask参数类型边界",
+      "title": "C550 wave64: shuffle, reduction, and mask parameter types",
       "tags": [
         "wave64",
         "shuffle",
@@ -197,8 +192,7 @@
         "mask",
         "subgroup",
         "warp",
-        "归约",
-        "尾部",
+        "tails",
         "C550",
         "mask-types",
         "unsigned",
@@ -214,11 +208,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/715e8771b435fde1463787b6c5996d38a0b5ca1f"
       ],
       "result": "data/results/20261008-mask-overloads.json",
-      "limitations": "两种完整typed mask在当前SDK分别对应64/32元素语义组，物理wave仍64；类型与mask数值同时改变，不是type-only因果或同算子速度比较。不覆盖稀疏mask、溢出或浮点。"
+      "limitations": "The two full typed masks select 64- and 32-element semantic groups in this SDK; physical wave width remains 64. Type and mask value change together, so this is neither a type-only causal comparison nor a same-operator speed comparison. Sparse masks, overflow, and floating-point reduction are untested."
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA精确性：输入回读一致、scalar精确与可复现残差",
+      "title": "C550 WMMA exactness: unchanged inputs, exact scalar controls, and reproducible residuals",
       "tags": [
         "WMMA",
         "matrix",
@@ -226,14 +220,13 @@
         "FP32",
         "accuracy",
         "rounding",
-        "精度",
-        "矩阵",
-        "诊断",
+        "precision",
+        "diagnosis",
         "C550",
         "scalar",
         "input readback",
         "device snapshots",
-        "对照"
+        "control"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -244,7 +237,7 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/403a74a6211755e790886b84eefc45955c9588e6"
       ],
       "result": "data/results/20261008-wmma-scalar-control.json",
-      "limitations": "WMMA严格exact仍失败、性能不接受；三阶段输入回读一致且scalar-source FP32精确，只缩小到当前WMMA路径，不排除内部load/lowering/算术，不唯一归责硬件。"
+      "limitations": "WMMA still fails the strict exact contract, and its performance is not accepted. Matching input readbacks at three boundaries and exact scalar-source FP32 outputs narrow the issue to this WMMA path. They do not exclude internal loads, lowering, or arithmetic, or uniquely implicate hardware."
     }
   ]
 }

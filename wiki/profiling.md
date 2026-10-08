@@ -1,29 +1,31 @@
-# MACA trace：成功采集与成功退出是两件事
+# MACA traces: process success does not establish capture success
 
-本机使用 `mcTracer 3.5.3.18-ef9e10e` 对首轮 copy 的 block 256 配置做了独立采集。采集运行的事件计时与无采集实验分开，不能用带 tracer 的数值替换原来的性能样本。
+[Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/native/README.md)
 
-## 输出目录失败仍可能返回 0
+The installed `mcTracer 3.5.3.18-ef9e10e` independently profiled the initial copy with block size 256. Event timing from profiled runs is kept separate from unprofiled measurements; it does not replace the original performance samples.
 
-`20261007-trace-01` 给 `--odname` 传入绝对路径。该版本把它拼到当前工作目录后，导致目录创建失败；日志包含 `FATAL`，但退出码为 0。应用仍生成了输出，因此仅检查应用输出或进程退出码都不能证明 profiler 成功。
+## An output-directory failure can still return zero
 
-后继 `20261007-trace-02` 在新的运行目录中使用相对的 `--odname trace`，生成可解析 JSON，并通过这次 copy 的完整 CPU 输出检查。第一份失败记录保留，没有补写成成功。
+Run `20261007-trace-01` passed an absolute path to `--odname`. This version appended that path to the working directory, failed to create the directory and logged `FATAL`, yet returned exit code 0. The application still produced output. Neither application output nor the process exit code alone establishes successful profiling.
 
-## 本次 trace 实际覆盖什么
+Successor `20261007-trace-02` used relative `--odname trace` in a fresh run directory. It produced parseable JSON and passed the complete CPU output check for that copy. The first failure was retained, not rewritten as a success.
 
-共 5171 个 trace event，其中 **1020 个 GPU copy kernel event** 对应 20 次预热和 1000 次被计时的 launch。它们与 host `mcLaunchKernel` 的 correlation id 一一对应；不能只把 host API 调用数当作 GPU dispatch 数。
+## What the trace actually covers
 
-这 1020 个 kernel event 均报告 block 256、grid 16385、每线程 6 个寄存器、静态/动态 shared memory 为 0、private memory 为 0。这里保留的是该工具对这份产物的报告，不是通用寄存器上限或 occupancy 标定。`max_block_size=512` 仅在部分事件中出现；缺失值不能补成 0。它与设备 runtime 报告的最大 1024 线程是不同层级的字段。
+The trace contains 5171 events, including **1020 GPU copy-kernel events** corresponding to 20 warmups and 1000 timed launches. Their correlation IDs match the host `mcLaunchKernel` calls one to one. Host API counts alone are not GPU dispatch counts.
 
-trace 元数据中的名称 `C500` 是工具标签；本轮 native runtime 的精确设备名仍是 `MetaX C550`，不会因兼容标签而更换目标身份。
+All 1020 kernel events report block 256, grid 16385, 6 registers per thread, zero static/dynamic shared memory and zero private memory. These are the tool's reports for this artifact, not a general register limit or occupancy calibration. `max_block_size=512` appears only in some events; missing values must not become zero. This field is distinct from the device runtime's maximum of 1024 threads.
 
-## 时间单位尚未单独验证
+The trace metadata label `C500` is a tool label. The exact native runtime device name remained `MetaX C550`; a compatibility label does not change the target identity.
 
-JSON 没有声明时间单位。安装的 MCPTI 头文件将 activity timestamp 注释为 ns，而导出的 timestamp 数量级和事件批次跨度与 ns 解释一致；这仍不足以单独验证 exporter 没有做变换。本库保存 `dur` 原始数值，标记单位未验证，不直接把它作为已校准的微秒 kernel latency。
+## Trace time units remain unverified
 
-去掉 20 个预热后，1000 个 GPU event 的原始 `dur` 为 median 48640，范围 [46848, 52224]。这些数值来自带 tracer 的运行。完整分析见[采集结果](../data/results/20261007-trace-02.json)。
+The JSON does not declare a time unit. Installed MCPTI headers describe activity timestamps as ns, and the exported timestamp magnitude and event-batch span are consistent with ns. That is still insufficient to establish that the exporter applies no transformation. This wiki retains raw `dur` values with units marked unverified, not as calibrated kernel latency in microseconds.
 
-后续需要对 exporter 的单位契约或实现作独立确认，再比较相同采集运行中的 kernel 区间和 event 区间。trace 没有提供已验证的 cache/DRAM 性能计数器，本次不会据此归因访存瓶颈。
+After removing 20 warmups, the 1000 GPU events have raw `dur` median 48640 and range [46848, 52224]. They come from the profiled execution. See the [capture result](../data/results/20261007-trace-02.json) for the complete analysis.
 
-## 后继的 512/1024 调查
+The exporter's unit contract or implementation must be checked independently before comparing kernel intervals with event intervals from the same capture. This trace supplies no validated cache/DRAM performance counters, so it does not identify a memory bottleneck.
 
-[launch-bounds 实验](launch-bounds.md)已确认：该默认函数即使以 1024 线程正确执行，runtime 属性也可能继续返回 512；trace 的执行变体字段与显式函数声明需分别记录。新增 `--initial-launches 1` 用于分离首发诊断与随后 20 次预热。汇总脚本只剔除一个连续前缀，必须用于单 case trace，不能把混合 sweep 的预热总数当成一个前缀。
+## Successor investigation of 512/1024-thread launches
+
+The [launch-bounds experiment](launch-bounds.md) confirmed that a default function can execute correctly with 1024 threads while its runtime attribute remains 512. Execution-variant trace fields and explicit function declarations must be recorded separately. The added `--initial-launches 1` option separates the initial diagnostic launch from the following 20 warmups. The summarizer removes one contiguous prefix and must therefore be used on a single-case trace; the total warmup count of a mixed sweep is not one such prefix.

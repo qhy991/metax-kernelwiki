@@ -1,16 +1,18 @@
-# C550原生WMMA：严格精确验收失败与可复现残差
+# Native C550 WMMA: failed exact acceptance and reproducible residuals
 
-在本次C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` 环境，原生16×16×16 FP16 WMMA及float累加fragment能够编译和执行，但**没有满足这组输入的严格精确数值合同**。首次12case中，K=0和1×1×1精确通过，其余10case共177个输出不等于预先固定的参考值。输入与guards完整，输出全部有限。
+[Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-首个失配位置是16×16×16的C[0,0]：参考为`-0.5`（`0xbf000000`），设备输出为`-0.5000000596046448`（`0xbf000001`）。同一冻结二进制在两个独立进程及一份诊断trace中，完整输出位均重现首次结果。[全部原始输入、输出与诊断记录](../data/results/20261008-wmma-exact-diagnostic.json)明确保存`correctness.passed=false`及`performance_accepted=false`；没有放宽容差，也不从这些计时报告性能。
+In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite.
 
-## 预先固定的矩阵与数值合同
+The first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
-源码`ef22b51`采用native `-x maca -offload-arch=xcore1000`，包含`mcr/mc_runtime.h`与当前编译器资源头`__clang_maca_mma_functions.h`，调用`mxmaca::wmma`。这是本机版本的实际入口；官方示例的`mma.h`位于cu-bridge包含路径，其宏条件不能直接当作native入口已验证。
+## Predetermined matrix and numerical contract
 
-一个完整64-thread block处理一个16×16输出tile。A按row-major、B按column-major分成16宽的K块；每个operand固定存四块，不足M/N/K的位置在主机准备阶段补+0。每个线程都经过相同的`ceil(K/16)`循环，float累加fragment初始化为0，调用安装头文件中的四参数`mma_sync`，最后以row-major存出全部256个值。K=0也执行fill和store，不提前退出。packing与传输不在事件计时内。
+Source `ef22b51` uses native `-x maca -offload-arch=xcore1000`, includes `mcr/mc_runtime.h` and the installed compiler resource header `__clang_maca_mma_functions.h`, and calls `mxmaca::wmma`. This is the actual installed route. The official example's `mma.h` is under the cu-bridge include path; its macro conditions do not by themselves qualify a native include route.
 
-逻辑输入为：
+One complete 64-thread block handles one 16×16 output tile. A is packed row-major and B column-major into K chunks of width 16. Each operand stores four chunks; host preparation fills positions outside logical M/N/K with +0. Every thread follows the same `ceil(K/16)` loop, starts its float accumulator fragment at zero, calls the installed four-argument `mma_sync` and stores all 256 values row-major. K=0 still fills and stores the fragment without an early exit. Packing and transfers are excluded from event timing.
+
+Logical inputs are:
 
 ```text
 a_num(i,k) = ((67*i + 13*k) % 31) - 15
@@ -19,15 +21,15 @@ A = a_num / 16; B = b_num / 16
 C_ref(i,j) = sum_k a_num(i,k)*b_num(k,j) / 256
 ```
 
-这些输入能由binary16精确表示，单个乘积为整数/256。K≤64时，任意子集或部分和的分子绝对值不超过`64×15×14=13440`，小于2²⁴。因此一串正确舍入的FP32乘法和加法能精确表示这些中间量；改变这种求和的结合顺序本身不需要产生残差。
+These inputs are exactly representable in binary16, and each product is an integer divided by 256. For K≤64, the absolute numerator of any subset or partial sum is bounded by `64×15×14=13440`, below 2²⁴. A sequence of correctly rounded FP32 multiplications and additions can therefore represent these intermediates exactly. Reassociating this ordinary sum does not itself require a residual.
 
-CPU oracle独立使用逻辑i/j/k整数点积，不调用WMMA、不使用fragment的lane映射。验收要求所有256个输出有限且数值精确相等，+0/−0等价；两侧各64个guard按位检查。另有错误B布局、漏K块、未写padding、非有限值和FP16舍入后的错误输出等CPU负对照。[实现与复现命令](../experiments/wmma/README.md)保留完整合同。
+The independent CPU oracle uses logical i/j/k integer dot products, not WMMA or fragment lane mappings. Acceptance requires all 256 outputs to be finite and numerically exact, treating +0/−0 as equal. It checks 64 guards on each side bitwise. CPU negative controls include incorrect B layout, omitted K chunks, unwritten padding, nonfinite outputs and outputs incorrectly rounded to FP16. The [implementation and reproduction commands](../experiments/wmma/README.md) retain the full contract.
 
-## 首次结果与独立复现
+## Initial results and independent reproduction
 
-下面是对首次保留输出的全量诊断。每case检查完整16×16区域，包含逻辑M/N外的零输出：
+The following all-case diagnostic examines the retained initial outputs. Each case checks the entire 16×16 region, including zeros outside logical M/N:
 
-| M×N×K | 精确不等的输出数 | 最大绝对残差 |
+| M×N×K | Outputs failing exact equality | Maximum absolute residual |
 | --- | ---: | ---: |
 | 16×16×0 | 0 | 0 |
 | 1×1×1 | 0 | 0 |
@@ -42,65 +44,67 @@ CPU oracle独立使用逻辑i/j/k整数点积，不调用WMMA、不使用fragmen
 | 9×7×63 | 1 | 4.76837158e-07 |
 | 16×16×64 | 10 | 4.76837158e-07 |
 
-原严格CLI在第三个case的首个失配处停止，所以原计划中的逆序和性能trace没有启动。之后另建**失败复现诊断**：保持原`ef22b51`二进制、输入、oracle、预热与计时设置不变，单独执行两次dense K16、一次dense K64，再采一份K16诊断trace。它们的A/B文件及全部输出words（含guards）均与首次对应case一致；严格checker仍返回失败。原失败没有被重跑结果覆盖。
+The original strict CLI stopped at the first mismatch in the third case. The original plan's reverse run and performance traces were not started. A separate **failure-reproduction diagnostic** then retained the original `ef22b51` binary, inputs, oracle, warmups and timing settings: two independent dense K16 runs, one dense K64 run and one K16 diagnostic trace. Their A/B files and every output word, including guards, match the corresponding initial cases. The strict checker continues to fail. New runs did not overwrite the original failure.
 
-独立诊断重新检查了首次CLI尚未检查到的后续输出，并对全部16个实际case保留了32,768个输入halfwords、4,096个C值和2,048个guards。所有输入符合预先声明的packed布局，所有C值有限、所有guards完好；参考为零和逻辑padding的位置也保持精确零。把实际输入逐项乘法、每次累加都舍入到FP32的CPU重放，同样得到精确参考值。
+The independent diagnostic also visits outputs that the first CLI never reached. Across all 16 actual cases, it retains 32,768 input halfwords, 4,096 C values and 2,048 guards. All retained inputs match the declared packing, all C values are finite and all guards are intact. Reference-zero and logical-padding positions remain exactly zero. A CPU replay of the actual inputs, rounding every product and accumulation to FP32, also reproduces the exact reference.
 
-这些检查支持排除host打包错误及通常的FP32求和重排作为当前解释，不能据此定位硬件缺陷。这一阶段尚未保存device侧A/B回读，也没有GPU标量FP32对照；下文的后继补充了这两项控制，仍未把责任唯一归给硬件。
+These checks rule out host-packing mistakes and ordinary FP32 summation reordering as explanations under the declared input contract; they do not locate a hardware defect. At this stage, device A/B readbacks and a GPU scalar-FP32 control had not been collected. The successor below adds both controls without uniquely attributing the cause to hardware.
 
-## 误差指标不能省略定义
+## Define the error metric
 
-最大绝对残差为`4.76837158203125e-7`。最大相邻FP32距离出现在M16/N15/K32的C[0,9]：
+The maximum absolute residual is `4.76837158203125e-7`. The largest adjacent-FP32 distance occurs at C[0,9] for M16/N15/K32:
 
-| | 参考 | 实际 |
+| | Reference | Observed |
 | --- | --- | --- |
-| 数值 | 0.00390625 | 0.0039062313735485077 |
+| Value | 0.00390625 | 0.0039062313735485077 |
 | FP32 bits | `0x3b800000` | `0x3b7fffb0` |
 
-这里按单调FP32编码计算两数之间的**相邻可表示值步数**，把两个符号的零视为同一个值，得到80步。参考恰好在2的幂边界；若改用参考值向上的spacing作分母，会得到40，所以不能不加定义地称为“80 ULP”。这只是所测数据的观察上界，不是通用容差建议。
+A monotonic FP32 encoding counts **adjacent representable-value steps**, treating both signed zeros as one value. The distance is 80 steps. The reference lies exactly on a power-of-two boundary; dividing by the spacing upward from the reference instead gives 40. Calling this simply 80 ULP without defining the convention would be ambiguous. It is an observed bound for the tested data, not a general tolerance recommendation.
 
-## 文档与profiler的证据边界
+## What documentation and profiling establish
 
-[官方C++指南3.5.3.x的WMMA章节][wmma]描述D=A×B+C、fragment类型和全warp参与要求，[类型表][types]列出FP16输入与float累加fragment。但本次核查没有找到该章节对中间精度、舍入方式、误差界或逐步IEEE FP32乘加等价的保证。同页half/half2算术或转换函数的舍入条款不能转用于WMMA。因此当前结论是**强exact合同失败、数值机制未解释**，不是已证实的厂商缺陷。
+The [official 3.5.3.x C++ guide's WMMA section][wmma] describes D=A×B+C, fragment types and full-warp participation. Its [type table][types] includes FP16 inputs with a float accumulator fragment. The reviewed section provides no identified guarantee for intermediate precision, rounding mode, error bounds or equivalence to stepwise IEEE FP32 multiply-add. Rounding clauses for half/half2 arithmetic or conversion elsewhere on the page cannot be transferred to WMMA. The current conclusion is therefore **failure of the strong exact contract with an unexplained numerical mechanism**, not a demonstrated vendor defect.
 
-诊断trace含110个`wmma_tile_kernel`事件，报告28regs、static/dynamic shared和每线程private均为0，重编译标志110个false且无缺失。这不能识别造成残差的算术机制。原始事件批次和trace时长仅作追溯保留；trace时间单位仍未独立验证，不发布吞吐、加速比或每条MMA延迟。五个device worker及一个profiled应用已退出并完成释放检查。
+The diagnostic trace contains 110 `wmma_tile_kernel` events. It reports 28 registers, zero static/dynamic shared memory and zero private memory per thread, with 110 false recompilation flags and no missing values. This does not identify the arithmetic mechanism behind the residual. Raw event batches and trace durations remain only for traceability. Trace units are independently unverified; no throughput, speedup or per-MMA latency is reported. Five device workers and one profiled application exited and passed release observations.
 
-wiki把本页标为`locally-measured / device-correctness`，表明它是直接测得的数值诊断；原性能入口`local-measurement`仍必须通过完整正确性检查。索引允许保存失败事实，不会把失败变成通过。
+This page is indexed as `locally-measured / device-correctness` to describe a direct numerical diagnostic. The performance scope `local-measurement` still requires a complete passing correctness check. Indexing a failure does not turn it into a pass.
 
-后继使用新的源码与诊断计划补充输入回读和标量对照，原失败保持不变。各轮均未向open-cake-ir的Compiler、Target或校准提升。
+A successor uses new source and a new diagnostic plan for input readbacks and a scalar control, preserving the original failure. None of these studies promoted a change to the open-cake-ir Compiler, Target or calibration.
 
-## 后继：设备输入快照与标量FP32源码对照
+<a id="后继设备输入快照与标量fp32源码对照"></a>
 
-源码`403a74a`加入独立的control模式，WMMA函数体保持相同；这不声明编译后二进制与`ef22b51`相同。每个logical case只向同一组A/B设备分配上传一次输入，然后依次运行WMMA和scalar两个实现。它们使用各自的C分配、各自的guards及固定的输出文件名；每个实现结束后立即保存完整输出，再进入另一个实现。
+## Successor: device input snapshots and a scalar FP32 source control
 
-标量源码让256个线程各负责一个C元素，使用`__half2float`读取与WMMA相同的packed A/B地址，遍历相同的完整K块（包含补零），用float变量执行乘加。WMMA使用64个线程和fragment接口。两者的执行几何及加载代码不同，这是功能对照；普通float源码也不证明最终一定采用独立标量指令或禁止FMA收缩。
+Source `403a74a` adds a separate control mode while preserving the WMMA function body. This does not assert that the compiled binary is identical to `ef22b51`. Each logical case uploads inputs once to the same A/B device allocations, then runs WMMA and scalar in its declared order. Each implementation has its own C allocation, guards and fixed output filename. Each complete output is saved immediately after its implementation finishes; the first output is saved before the second implementation runs.
 
-三次完整A/B回读分别发生在第一次计算前、两个实现之间、第二次计算后。每份快照都逐word对照原始输入文件和固定packing合同，两个实现之间不重新写入A/B。
+The scalar source launches 256 threads, one per C element. It uses `__half2float` to read the same packed A/B addresses, traverses the same complete K chunks including padding, and performs multiplication and addition with float variables. WMMA uses 64 threads and the fragment interface. Launch geometry and load code differ: this is a functional control. Ordinary float source does not prove separate scalar machine instructions or forbid FMA contraction.
 
-| 配对运行 | logical cases | WMMA精确不等元素数 | scalar精确不等元素数 | 三阶段输入回读 |
+Complete A/B readbacks occur before the first computation, between implementations and after the second computation. Every word in every snapshot is checked against the original input file and fixed packing contract. There is no A/B rewrite between implementations.
+
+| Paired run | Logical cases | Unequal WMMA elements | Unequal scalar elements | Three-stage input readbacks |
 | --- | ---: | ---: | ---: | --- |
-| 正序cases，WMMA先执行 | 12 | 177 | 0 | 全部一致 |
-| 逆序cases，scalar先执行 | 12 | 177 | 0 | 全部一致 |
-| K16配对trace，WMMA先执行 | 1 | 30 | 0 | 全部一致 |
+| Forward cases, WMMA first | 12 | 177 | 0 | All match |
+| Reverse cases, scalar first | 12 | 177 | 0 | All match |
+| Paired K16 trace, WMMA first | 1 | 30 | 0 | All match |
 
-这25个配对case中，scalar的全部25份16×16结果都精确匹配原integer-dot/256 oracle；WMMA只有K0与1×1×1两种形状的重复观察通过，其余21份输出仍有失配。所有输出有限，所有guards完整。累计153,600个设备回读halfwords均与输入合同一致；它们是75次A/B成对快照，不是75套不同随机输入。
+All 25 scalar 16×16 results exactly match the original integer-dot/256 oracle. WMMA passes only the repeated K0 and 1×1×1 shapes; the other 21 output matrices still contain mismatches. Every output is finite and every guard is intact. All 153,600 device-readback halfwords match the input contract. They form 75 paired A/B snapshots, not 75 different random inputs.
 
-16×16×16的C[0,0]在两种顺序和配对trace中都保持：
+For 16×16×16, C[0,0] remains the same in both orders and the paired trace:
 
-| 路径 | 实际数值 | 实际FP32 bits |
+| Path | Observed value | Observed FP32 bits |
 | --- | ---: | --- |
 | WMMA | -0.5000000596046448 | `0xbf000001` |
-| scalar源码 | -0.5 | `0xbf000000` |
+| Scalar source | -0.5 | `0xbf000000` |
 
-同时，新源码默认mode0的12case仍保留原严格失败行为。对所有37份新WMMA输出（默认12份、配对25份）的实读比较显示：完整输出words均与`ef22b51`中对应形状的原输出相同；相等是实际观察，不是投影器预设的通过条件。原结果没有被scalar的通过覆盖。
+The successor's default mode0 binary also retains the original strict failure behavior across its 12 regression cases. Direct comparison of all 37 new WMMA outputs, comprising 12 default and 25 paired outputs, finds every complete output word equal to the corresponding `ef22b51` observation. Equality is an observation, not a condition imposed by the projection. Scalar success does not overwrite WMMA failure.
 
-[新控制记录](../data/results/20261008-wmma-scalar-control.json)公开了所有实际输入、三阶段回读及两个C输出。默认回归与配对合计62份variant输出、15,872个payload、7,936个guards、620个原始计时批次；总合同仍为`passed=false`、`performance_accepted=false`。按相同oracle保存失败，不比较两种实现的时间来声称加速。
+The [control record](../data/results/20261008-wmma-scalar-control.json) publishes prepared inputs, all three readback stages and both C outputs. Default regression plus paired runs contain 62 variant outputs, 15,872 payload words, 7,936 guards and 620 raw timing batches. The overall contract remains `passed=false` and `performance_accepted=false`. The same oracle retains failures; timing is not compared to claim a speedup.
 
-配对trace恰有220个kernel事件：WMMA和scalar各110个，分别按自己的前10次识别预热，未把两组事件混成一个全局预热前缀。工具报告WMMA为block64/28regs，scalar为block256/36regs；两组shared/private为0，重编译标志各110个false。所有四个worker及一个profiled应用均已退出并验证释放。
+The paired trace has exactly 220 kernel events: 110 WMMA and 110 scalar events. Each group identifies its own first 10 warmups; no single global prefix is removed. The tool reports WMMA block64/28 registers and scalar block256/36 registers. Both groups report zero shared/private memory and 110 false recompilation flags. All four workers and one profiled application exited and passed release observations.
 
-在本次SDK、输入和插桩条件下，同一设备输入可以由scalar源码路径得到精确结果，WMMA路径则重现原残差，排查范围因而缩小到这条WMMA kernel路径。三个快照只证明捕获边界上的输入状态，不能排除kernel内部的瞬态值、专用fragment加载、不同lowering或内部算术；也不构成单独的硬件归因。
+For this SDK, input and instrumentation, the scalar source path produces exact results from the shared device inputs while WMMA reproduces the original residuals. This narrows the investigation to the WMMA execution path under these conditions. Three snapshots establish state only at their capture boundaries; they do not exclude transient values inside the kernel, specialized fragment loads, different lowering or internal arithmetic. They do not uniquely attribute the cause to hardware.
 
-下一步可以缩小逻辑矩阵及K前缀，同时保留完整物理tile与scalar控制，检查残差出现的条件；还需审查实际生成代码。当前没有证明“首个失配”就是最小反例，也没有把观察的误差上界变为通用容差。
+A next study can reduce logical matrix extents and K prefixes while preserving the complete physical tile and scalar control, then examine when residuals appear. Actual generated code still needs inspection. The first mismatch is not a proven globally minimal counterexample, and the observed error bound has not become a general tolerance.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

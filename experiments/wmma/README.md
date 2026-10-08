@@ -1,5 +1,7 @@
 # Native MACA WMMA: one FP16-input, FP32-output tile
 
+[Home](../../README.md) · [Measured diagnostics](../../wiki/wmma-exactness.md)
+
 Question: does this installed native MACA WMMA interface compute a complete
 16×16 FP32 result from FP16 A-row/B-column packed chunks, including logical
 M/N/K tails and an empty reduction? This is a bounded numerical and layout

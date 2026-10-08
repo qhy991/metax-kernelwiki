@@ -1,99 +1,103 @@
-# C550 同结果转置：分块、行距与shared容量对照
+# C550 transpose: tiling, shared pitch and capacity controls
 
-首轮在同一 FP32 转置操作上比较直接访问、64×64 共享内存分块和增加一列 padding 的分块实现。57 个 case 的完整输出及 guards 全部通过；三个大尺寸的六进程对照中，未 padding 的分块版本相对本次直接访问基线分别取得约 **9.18×、7.52×、2.83×** 的事件区间加速比。
+[Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/transpose/README.md)
 
-第一轮两个专用 tiled kernel 的 padding 效应没有统一方向。后继将已分配容量固定，并让两种行距使用同一个运行时参数 kernel，五个大尺寸上的行距65均更快。两轮的条件不同，均保留各自证据；不能把任一结果写成无条件的C550规则。第三轮再用动态shared把请求量与行距拆开：请求量响应依赖shape，固定请求下的行距效应仍存在。第一轮的[完整样本与资源](../data/results/20261008-transpose.json)保持不变，后继对照见下文。
+The first study compared direct access, a 64×64 shared-memory tile and a tile with one extra padding column for the same FP32 transpose. All outputs and guards passed for 57 cases. In six-process comparisons at three large shapes, the unpadded tile achieved event-interval speedup ratios of approximately **9.18×, 7.52× and 2.83×** against this direct-access baseline.
 
-## 这次比较保持了相同结果
+Padding had no consistent direction of benefit across the first two specialized tiled kernels. A successor fixed the declared allocation capacity and used one runtime-parameter kernel for both pitches; pitch65 was faster at all five large shapes tested. A third study separated dynamic shared-memory requests from pitch: the request response depended on shape, while the pitch effect remained at a fixed request. Each study retains its own conditions and evidence. None establishes an unconditional C550 rule. The first study's [complete samples and resources](../data/results/20261008-transpose.json) remain unchanged.
 
-操作固定为非原地、连续行主序的 FP32 转置：
+## The implementations produce the same result
+
+The operation is out-of-place, contiguous row-major FP32 transpose:
 
 ```text
 B[col * rows + row] = A[row * cols + col]
 ```
 
-三种实现对同一 shape 读取和写入相同元素，产生完全相同的输出；每个进程复用同一对设备缓冲区。[之前的读取排列实验](memory-order.md)改变了输出排列，只能用来提出假设，本页没有沿用它的时间作为基线。
+At a fixed shape, all three implementations read and write the same elements and produce identical outputs. Each process reuses the same pair of device buffers. The [earlier read-order experiment](memory-order.md) changed output permutations and serves only to motivate hypotheses; its timings are not the baseline here.
 
-| 实现 | 线程块 | 每 block 的工作与存储 |
+| Implementation | Thread block | Work and storage per block |
 | --- | --- | --- |
-| `direct` | 256×1 | 每个线程写一个连续输出，用除法/余数定位输入 |
-| `tile64` | 64×4 | 协作加载 64×64 tile，同步后交换坐标写出；shared 声明 64×64 |
-| `tile64_pad1` | 64×4 | 同样的 tile 和同步结构；shared 声明 64×65 |
+| `direct` | 256×1 | Each thread writes one consecutive output and locates its input using division/remainder |
+| `tile64` | 64×4 | Cooperatively load a 64×64 tile, synchronize, then exchange coordinates for stores; declared shared array is 64×64 |
+| `tile64_pad1` | 64×4 | The same tile and synchronization structure; declared shared array is 64×65 |
 
-分块一起改变了地址计算、block 数、每线程工作量、共享存储和 barrier。对直接访问的比值是**完整实现对照**，不能全部归因于访存合并。两个 tiled 版本的源码只改变 shared 行距，但编译器生成的地址计算和资源使用也可能随之改变。
+Tiling jointly changes address arithmetic, block count, work per thread, shared storage and barriers. Its ratio against direct access is a **whole-implementation comparison**, not an isolated measure of coalescing. The two tiled sources differ only in shared row pitch, but that can also change generated address arithmetic and resource use.
 
-## 尾部为什么不会读取未初始化的 shared 元素
+## Why edge stores read initialized shared elements
 
-load 写入 `tile[u][v]` 的条件是：
+A load writes `tile[u][v]` when:
 
 ```text
 by*64 + u < rows && bx*64 + v < cols
 ```
 
-store 读取 `tile[tx][ty+j]` 时，独立使用转置后的边界条件：
+A store reading `tile[tx][ty+j]` independently checks the transposed coordinates:
 
 ```text
 by*64 + tx < rows && bx*64 + ty+j < cols
 ```
 
-后者恰好是对应 shared 元素原 loader 的有效条件。所有 256 个线程都会经过同一个 `__syncthreads`，没有提前返回；不能因为某个线程的原始 load 越界，就让它跳过 barrier 或复用自己的 load guard 去决定 store。
+The store condition is exactly the validity condition of the earlier load for that shared element. All 256 threads reach the same `__syncthreads` without early returns. A thread whose own load is out of bounds must not skip the barrier or reuse its load guard to decide whether to store.
 
-本轮覆盖单元素、细长矩阵、`31×33`/`33×31`、`63/64/65` 的九种组合，以及五个大矩阵，其中包括 `262143×63` 和 `4095×4097` 两种不整齐尺寸。全部最终输出逐位对照独立的 CPU 行/列循环，前后各 32 个 guard word 保持不变。源码和复现入口见 [transpose README](../experiments/transpose/README.md)；这仍不是逐次中间输出检查或通用 race sanitizer。
+Coverage includes one-element and skinny matrices, `31×33`/`33×31`, all nine `63/64/65` dimension combinations, and five large matrices including ragged `262143×63` and `4095×4097`. Every final output was compared bitwise with independent CPU row/column loops, and all 32 guard words on each side remained intact. See the [transpose README](../experiments/transpose/README.md) for source and reproduction. This does not check every intermediate launch or provide a general race sanitizer.
 
-## 六进程同 shape 确认
+## Six-process confirmation for matching shapes
 
-源码固定为 `bf1db0f`，环境为 C550、MACA 3.5.3.18、MXCC `1.0.0 (6477545d4d)`。每个 case 先预热 10 次，再记录 10 个批次、每批 10 次 launch。六个进程按预先固定的 shape/实现顺序执行，每种实现于同 shape 内各位置出现两次。每个进程退出并释放设备后，才进行 CPU 全量检查。
+The first study used source `bf1db0f` on C550 with MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Each case performed 10 warmups and 10 batches of 10 launches. Six processes followed predetermined shape/implementation orders, placing each implementation at each position twice within a shape. Full CPU checking followed process exit and device release.
 
-以下时间先在进程内取批次中位数，再报告六进程的 median [min, max]，单位 µs：
+Times below first take each process's batch median, then report six-process median [min, max], in µs:
 
-| 输入 shape | direct | tile64 | tile64_pad1 |
+| Input shape | direct | tile64 | tile64_pad1 |
 | --- | ---: | ---: | ---: |
 | 262144×64 | 1555.738 [1555.469, 1556.275] | 169.459 [168.986, 169.894] | 169.651 [169.357, 170.278] |
 | 65536×256 | 1274.528 [1270.515, 1279.706] | 169.517 [169.114, 169.779] | 171.283 [170.893, 171.917] |
 | 4096×4096 | 475.795 [475.187, 476.096] | 167.968 [167.501, 168.384] | 165.734 [165.504, 166.323] |
 
-比值在**同一进程、同一 shape**内计算，然后汇总；不是两组汇总中位数相除：
+Ratios are calculated **within the same process and shape**, then summarized. They are not ratios of aggregate medians:
 
-| shape | T(direct)/T(tile64) | T(tile64)/T(pad1) |
+| Shape | T(direct)/T(tile64) | T(tile64)/T(pad1) |
 | --- | ---: | ---: |
 | 262144×64 | 9.183 [9.156, 9.205] | 0.999 [0.995, 1.003] |
 | 65536×256 | 7.523 [7.498, 7.548] | 0.991 [0.984, 0.991] |
 | 4096×4096 | 2.833 [2.826, 2.842] | 1.012 [1.011, 1.016] |
 
-第二列衡量相对本次直接访问基线的收益。第三列大于 1 表示 padding 更快，小于 1 表示更慢。这三个 shape 的结果不构成通用最优 tile 或 dispatcher 规则。两个大 ragged shape 只进行了完整正确性和初步计时，未纳入六进程性能确认。
+The second column measures benefit against this direct-access baseline. In the third column, a value above 1 means padding is faster; below 1 means slower. These three shapes do not establish a generally optimal tile or dispatcher rule. At this stage, the two large ragged shapes had full correctness checks and exploratory timing, but no six-process performance confirmation.
 
-## 工具报告了资源，没有报告 bank 冲突
+## Resource reports are not bank-conflict measurements
 
-另对 `4096×4096` 的三种实现分别采集 trace，每份都有 110 个真实 kernel event，且最终输出正确。函数查询和 trace 一致报告：
+Separate traces covered all three implementations at `4096×4096`. Each contained 110 actual kernel events and passed final-output checking. Function queries and traces agreed on these reports:
 
-| 实现 | 每线程寄存器数（报告值） | static shared bytes（报告值） |
+| Implementation | Reported registers per thread | Reported static shared bytes |
 | --- | ---: | ---: |
 | direct | 14 | 0 |
 | tile64 | 13 | 16,384 |
 | tile64_pad1 | 13 | 16,640 |
 
-实际 shared 用量与源码数组预期值分开保留，而不是用预期替换工具结果。设备 API 还报告每 multiprocessor 的 shared 上限为 65,536 bytes；这些数字只能说明资源约束，不能直接给出实际 occupancy。没有采集经验证的 bank-conflict、cache 或 DRAM 流量计数器。
+Reported shared use is retained separately from the source array's intended size, not replaced with it. The device API also reports 65,536 bytes of shared memory per multiprocessor. These values describe resource constraints, not actual occupancy. No validated bank-conflict, cache or DRAM-traffic counters were collected.
 
-[官方优化指南的 C500 章节][c500-banks]描述了32个bank及64线程warp的分阶段访问，但它没有建立本次C550的bank契约。即使padding改变了时间，也不足以识别bank数、映射或冲突阶数。分块性能同时受全局读写组织、每线程工作量、同步和资源等因素影响。
+The [official tuning guide's C500 chapter][c500-banks] describes 32 banks and phased access by a 64-thread warp. It does not establish this C550's bank contract. A padding-related timing change alone does not identify bank count, mapping or conflict degree. Tiling also changes global read/write organization, per-thread work, synchronization and resources.
 
-本轮使用一套位置可辨识的有限 FP32 输入；没有验证原地转置、任意 stride、其他 dtype、其他 SDK/GPU 或目标框架集成。事件区间可能包含 host 提交间隙，数据缓存策略未校准、未锁频，分配范围是合作式 `local_serialized`。Profiler 计时与普通测量分开，trace 原始时间单位继续保持未验证。
+This study uses one position-distinguishing finite FP32 input. It does not qualify in-place transpose, arbitrary strides, other dtypes, other SDKs/GPUs or target-framework integration. Event intervals may include host submission gaps; data-cache policy is uncalibrated and clocks are not fixed. Allocation is cooperative `local_serialized`. Profiled timing remains separate from ordinary measurements, and raw trace time units remain unverified.
 
-## 后继：同一个函数，固定16,640字节容量
+<a id="后继同一个函数固定16640字节容量"></a>
 
-源码 `56db27e` 为19个原shape增加 `runtime_pitch64` / `runtime_pitch65` 两种控制。两者共用非模板函数 `transpose_runtime_pitch_kernel`，都声明 `__shared__ float storage[64*65]`；只有运行时参数 pitch 为64或65。global读写、block/grid、barrier、输入和CPU oracle保持相同。
+## Successor: one function with a fixed 16,640-byte capacity
+
+Source `56db27e` adds `runtime_pitch64` and `runtime_pitch65` controls for the original 19 shapes. Both use the non-template `transpose_runtime_pitch_kernel` and declare `__shared__ float storage[64*65]`. Only runtime pitch changes between 64 and 65. Global reads/writes, block/grid geometry, barrier, input and CPU oracle stay the same.
 
 ```text
 load:  storage[(ty+j)*pitch + tx]
 store: storage[tx*pitch + ty+j]
 ```
 
-pitch64使用前4096个slot，pitch65使用4096个slot并到达索引4158，均在4160元素容量内。源代码固定了分配容量，并没有固定实际访问的shared地址集合或活跃跨度。函数查询和两份独立trace进一步确认：两种参数均报告13个寄存器和16,640字节static shared，trace函数名相同，各含110个kernel event。资源报告不是实际occupancy测量。
+Pitch64 uses the first 4096 slots. Pitch65 uses 4096 slots and reaches index 4158. Both fit the 4160-element capacity. Source construction fixes declared capacity, not the active shared-address set or span. Function queries and two separate traces additionally report 13 registers and 16,640 static shared bytes for both arguments. The trace function name is the same, with 110 kernel events per capture. These reports do not measure actual occupancy.
 
-38个参数case的完整检查通过后，对三个整齐大矩阵和两个ragged大矩阵做了十个独立进程确认。每个shape在每个shape位置出现两次，两种pitch先后顺序各一次；没有宣称完整的跨case carryover平衡。100个确认case全部正确。
+After all 38 parameter cases passed, ten independent processes confirmed three regular and two ragged large matrices. Each shape appears at each shape position twice, once with each pitch order. This is not a claim of complete cross-case carryover balance. All 100 confirmation cases passed.
 
-下表按进程内批次中位数计算 `T64/T65`，然后汇总十进程 median [min,max]；数值大于1表示行距65更快：
+The table computes `T64/T65` from within-process batch medians and then reports ten-process median [min, max]. A value above 1 means pitch65 is faster:
 
-| shape | pitch64时间（µs，中位数） | pitch65时间（µs，中位数） | T64/T65 |
+| Shape | Pitch64 time (µs, median) | Pitch65 time (µs, median) | T64/T65 |
 | --- | ---: | ---: | ---: |
 | 262144×64 | 199.379 | 170.099 | 1.173 [1.167, 1.174] |
 | 65536×256 | 200.864 | 172.051 | 1.168 [1.158, 1.171] |
@@ -101,19 +105,21 @@ pitch64使用前4096个slot，pitch65使用4096个slot并到达索引4158，均�
 | 262143×63 | 202.534 | 183.981 | 1.101 [1.098, 1.105] |
 | 4095×4097 | 256.883 | 238.048 | 1.079 [1.075, 1.082] |
 
-每个shape的全部十个进程都观察到同一方向。[1400个原始计时批次、全部输出检查摘要与trace](../data/results/20261008-shared-pitch.json)独立保存，未覆盖第一轮记录。
+All ten processes observed the same direction for each shape. The [1400 raw timing batches, full-output check summaries and traces](../data/results/20261008-shared-pitch.json) are retained separately and do not overwrite the first study.
 
-这支持“在此共同函数和报告资源下，shared行距仍影响完整kernel时间”。新旧实验同时改变了容量条件与代码生成方式，因此不能倒推出第一轮效应完全来自容量或驻留数；更不能据此识别C550的bank几何。绝对时间也不应跨两套实现直接归因。
+The result supports an effect of shared pitch on complete-kernel time for this common function and its reported resources. The old and new experiments change both capacity conditions and code generation. They cannot attribute the first study's effects entirely to capacity or resident-block count, nor identify C550 bank geometry. Absolute times across the two implementations do not isolate a cause.
 
-下面用[官方动态shared接口](../docs/toolchain.md#动态-shared-容量的后继控制入口)进行更窄的容量请求对照。
+The next control uses the [official dynamic-shared interface](../docs/toolchain.md#dynamic-shared-memory-capacity-as-a-follow-up-control) to vary the capacity request more narrowly.
 
-## 再后继：同一函数的动态shared请求量
+<a id="再后继同一函数的动态shared请求量"></a>
 
-源码 `dd20525` 把storage改为`extern __shared__ float storage[]`，用同一个非模板kernel比较三个有效配置：A为pitch64/请求16,384B，B为pitch64/请求16,640B，C为pitch65/请求16,640B。A/B的kernel参数、shared访问地址、global读写与launch几何相同，只有launch动态shared请求量不同；B/C固定请求量比较行距。pitch65/16,384B不满足本套件容量合同，在host拒绝，不提交非法GPU访问。
+## Further control: dynamic shared-memory requests in one function
 
-57个case覆盖原19种形状并全部通过。确认阶段预先固定十进程，每种大shape按`A_first,B,C,A_last`或`A_first,C,B,A_last`执行；五个shape循环换位，每种位置和中间B/C顺序得到相同次数。每个case先取十个批次均摊时间的中位数，再定义`T_A=(T_A_first+T_A_last)/2`，逐进程计算比值，最后汇总十进程。
+Source `dd20525` changes storage to `extern __shared__ float storage[]` and compares three valid configurations in one non-template kernel: A is pitch64/request16,384B; B is pitch64/request16,640B; C is pitch65/request16,640B. A/B keep kernel arguments, shared addresses, global accesses and launch geometry the same, changing only the dynamic-shared launch request. B/C compare pitches at a fixed request. Pitch65/16,384B violates this suite's capacity contract and is refused on the host without an invalid GPU access.
 
-| shape | A（µs） | B（µs） | C（µs） | T_A/T_B，median [min,max] | T_B/T_C，median [min,max] |
+All 57 cases covering the original 19 shapes passed. Confirmation used ten predetermined processes, with each large shape following `A_first,B,C,A_last` or `A_first,C,B,A_last`. Five cyclic shape orders balance shape positions and the middle B/C order. Each case first takes the median of ten batch means; then `T_A=(T_A_first+T_A_last)/2`. Ratios are computed per process and summarized across ten processes.
+
+| Shape | A (µs) | B (µs) | C (µs) | T_A/T_B, median [min,max] | T_B/T_C, median [min,max] |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 262144×64 | 169.174 | 199.168 | 170.330 | 0.849 [0.849, 0.851] | 1.169 [1.166, 1.174] |
 | 65536×256 | 169.507 | 200.614 | 172.166 | 0.845 [0.843, 0.847] | 1.167 [1.154, 1.169] |
@@ -121,14 +127,14 @@ pitch64使用前4096个slot，pitch65使用4096个slot并到达索引4158，均�
 | 262143×63 | 179.514 | 202.483 | 184.422 | 0.887 [0.885, 0.888] | 1.098 [1.094, 1.104] |
 | 4095×4097 | 257.619 | 256.435 | 240.851 | 1.005 [0.999, 1.009] | 1.064 [1.062, 1.070] |
 
-表中A/B/C时间列是十进程中位数；比值先在各进程内计算，不从表内汇总时间相除。A/B小于1表示较小请求的A更快，B/C大于1表示相同请求量下pitch65的C更快。前四种shape的全部十进程都观察到A快于B；4095×4097的A/B为1.0047 [0.9994,1.0092]，方向并不一致。五种shape的B/C则全部同向。因此动态shared请求量能影响本kernel时间，但响应依赖shape；固定请求量下的行距收益也单独存在。
+The A/B/C time columns are ten-process medians. Ratios are computed within each process, not from those table aggregates. A/B below 1 means the smaller request A is faster; B/C above 1 means pitch65 C is faster at the same request. All ten processes observed A faster than B for the first four shapes. For `4095×4097`, A/B is 1.0047 [0.9994,1.0092], so the direction is not consistent. B/C has a consistent direction at all five shapes. Dynamic-shared requests can affect this kernel's time, but the response depends on shape; a pitch effect also remains when the request is fixed.
 
-相同配置的前后端点用于观察漂移：50组`T_A_first/T_A_last`范围约0.9939–1.0029，全部原始端点及其分别除以B的比值保留。它不是完整carryover控制；没有因漂移或快慢排除任何进程，最后一种shape的小差异也不写成稳定容量优势。
+Matching endpoint configurations monitor drift. The 50 `T_A_first/T_A_last` ratios span approximately 0.9939–1.0029. Every endpoint and each endpoint's ratio to B is retained. This is not complete carryover control. No process was excluded for drift or speed, and the last shape's small difference is not reported as a stable capacity advantage.
 
-三个独立trace各含110个同名kernel。函数查询均报告13个寄存器、static shared为0、动态上限为65,536B；trace的dynamic shared分别报告16,384/16,640/16,640B。三份trace的重编译标志均为110个false，没有缺失；各自新建的binary-cache目录保持为空。这些是请求、API上限与工具报告三个层面的观测，既不证明物理取整后的分配，也不证明最终机器码恒同。不能直接用`65536 / 请求量`宣布驻留block数从4降至3。
+Three independent traces contain 110 events with the same kernel name each. Function queries report 13 registers, zero static shared memory and a dynamic limit of 65,536B. Trace dynamic-shared fields report 16,384/16,640/16,640B respectively. Each trace has 110 false recompilation flags with no missing values; its fresh binary-cache directory remained empty. Launch requests, API limits and tool descriptors are separate observations. They prove neither rounded physical allocation nor identical final machine code. Dividing `65536 / requested_bytes` cannot establish a reduction from 4 to 3 resident blocks.
 
-[本轮260个case、2600个原始计时批次与全部检查摘要](../data/results/20261008-dynamic-shared.json)包括57-case扫描、200个确认case及3个trace case，共检查3,646,275,267个payload元素与16,640个guard words，全部通过；这是重复检查次数，不是不同随机输入数量。全部14个设备进程及3个被profile应用均已退出并完成释放观测。
+The [260 cases, 2600 raw timing batches and check summaries](../data/results/20261008-dynamic-shared.json) comprise 57 sweep cases, 200 confirmation cases and 3 trace cases. All 3,646,275,267 payload-element checks and 16,640 guard-word checks passed. These are repeated checks, not that many distinct random inputs. All 14 device processes and 3 profiled applications exited and passed release observations.
 
-本轮支持将“行距访问”和“launch容量请求”拆开实验；没有估计二者完整交互，也没有把static与dynamic两套源码的绝对差值归因于单一机制。进一步区分资源调度与运行时路径，需要有定义的驻留或性能计数器证据；后继独立实验已验证[64-lane collective的有限语义范围](wave-collectives.md)。
+The study supports separating pitch access from launch-capacity requests experimentally. It does not estimate their full interaction or attribute the absolute difference between static and dynamic source implementations to one mechanism. Defined residency or performance-counter evidence is needed to distinguish resource scheduling from runtime paths. A subsequent independent experiment has checked the [bounded semantics of 64-lane collectives](wave-collectives.md).
 
 [c500-banks]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md

@@ -1,73 +1,75 @@
-# C550 的连续 copy 与 stride gather
+# C550 contiguous copy and strided gather
 
-运行 `20261007-native-01` 在一个固定次序的 sweep 中完成了 49 个 native 探针 case 的检查。对其中最大的 FP32 copy，block 从 64 增至 512 时，所观察的批内平均设备时间中位数逐项降低；固定 block 256 的 gather 随 stride 增大逐项升高。后继四进程平衡顺序实验确认了该 copy 规模下的排序；gather 仍只有首轮扫描，造成差异的具体硬件机制尚未确定。
+[Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/native/README.md)
 
-证据范围为 `local-measurement`，知识标签为 `locally-measured`。数值与运行条件由[本轮结果记录](../data/results/20261007-native-01.json)拥有；探针合同和复现步骤见 [native README](../experiments/native/README.md)，执行源码为提交 `cbdea92d92631a5cb388916bc985a0ceab7e3f16` 的 `experiments/native/probe.cpp`。
+Run `20261007-native-01` checked 49 native probe cases in a fixed-order sweep. For its largest FP32 copy, the observed median event-batch mean decreased at every step from block size 64 to 512. For gather with block size fixed at 256, it increased with stride. A subsequent four-process experiment with balanced order confirmed the copy ranking at that size. Gather still has only the initial sweep, and the hardware mechanisms behind the differences remain unresolved.
 
-## 这两个参数具体改变什么
+The evidence scope is `local-measurement` and the knowledge label is `locally-measured`. The [result record](../data/results/20261007-native-01.json) owns the values and conditions. See the [native README](../experiments/native/README.md) for the contract and reproduction procedure. Execution used `experiments/native/probe.cpp` at commit `cbdea92d92631a5cb388916bc985a0ceab7e3f16`.
 
-copy 使用 `i = blockIdx.x * blockDim.x + threadIdx.x`，在 `i < N` 时执行 `output[i] = input[i]`。修改 block 改变每个 block 的线程数、总 block 数和尾部未工作的线程数，保持每个有效元素的读写及输出合同不变。它可以作为探索执行配置的候选；目前没有资源或指令证据说明哪一项变化主导了时间。
+## What block size and stride change
 
-gather 的映射相同，但读取 `input[i * stride]` 并连续写入 `output[i]`，stride 单位是 FP32 元素。固定输出数时，增大 stride 同时增大输入索引跨度，改变相邻线程的读地址间距；输出元素数及逻辑读写字节量保持不变。不同 stride 对应不同输入索引合同，不能把改用 stride 1 直接视为保持原工作负载语义的优化。若应用允许重排或打包输入，还要比较准备成本和完整调用收益。
+Copy computes `i = blockIdx.x * blockDim.x + threadIdx.x` and, when `i < N`, performs `output[i] = input[i]`. Changing block size changes threads per block, total block count and inactive tail threads while preserving each valid element's read/write and the output contract. It is a candidate execution-configuration change; current resource and instruction evidence does not establish which changed factor dominates the time.
 
-访问间距与输入跨度一同变化，所以本轮时间无法将事务合并、缓存状态、调度及其他影响分开。没有 profiler 指标或反汇编支撑的解释仍是待验证假设；不从这些数值推断 cache line、bank 大小或 DRAM 流量。
+Gather uses the same thread mapping but reads `input[i * stride]` and writes consecutive `output[i]` elements. Stride is measured in FP32 elements. At fixed output count, increasing stride expands the input-index span and the spacing between neighboring threads' reads, while preserving output count and logical read/write bytes. Different strides select different input indices. Replacing a gather with stride 1 is therefore not automatically a semantics-preserving optimization. If an application permits input packing or reordering, preparation costs and the full invocation must also be compared.
 
-## 本轮数值
+Because access spacing and input span change together, these timings do not separate transaction coalescing, cache state, scheduling and other effects. Explanations without profiler metrics or disassembly remain hypotheses. These values do not identify cache-line size, bank size or DRAM traffic.
 
-每个 case 先执行 20 次预热并同步，再保存 10 个样本，每个样本包含 100 次 launch。下表为每个 `mcEventElapsedTime` 批次除以 100 后的中位数，单位为微秒。单个数值是批内平均设备时间的汇总，不是隔离的单次 kernel latency。完整样本和条件见[结果记录](../data/results/20261007-native-01.json)。
+## Initial measurements
 
-连续 copy，`N = 4,194,317` 个 FP32 元素：
+Each case performs 20 warmups and synchronization, then retains 10 samples of 100 launches. The tables show the median of each `mcEventElapsedTime` batch divided by 100, in microseconds. This summarizes a batch mean, not isolated single-kernel latency. The [result record](../data/results/20261007-native-01.json) retains every sample and condition.
 
-| block 线程数 | 批内平均设备时间的中位数（µs） |
-|---:|---:|
+Contiguous copy, `N = 4,194,317` FP32 elements:
+
+| Threads per block | Median event-batch mean (µs) |
+| ---: | ---: |
 | 64 | 67.706 |
 | 128 | 57.555 |
 | 256 | 47.502 |
 | 512 | 43.383 |
 
-stride gather，`N = 1,048,573` 个 FP32 输出，block 为 256：
+Strided gather, `N = 1,048,573` FP32 outputs, block size 256:
 
-| 输入 stride（元素） | 批内平均设备时间的中位数（µs） |
-|---:|---:|
+| Input stride (elements) | Median event-batch mean (µs) |
+| ---: | ---: |
 | 1 | 15.660 |
 | 2 | 16.637 |
 | 4 | 19.546 |
 | 8 | 30.730 |
 | 16 | 52.347 |
 
-这些顺序来自一次固定次序 sweep，不能据此确定通用最佳 block、一般加速比或稳定排序。若展示有效带宽，字节量仅为每个有效元素一次逻辑读取加一次逻辑写入，即 FP32 的 `8*N` 字节；输入跨度的空洞不计入有用字节。该指标不等于测得的 DRAM 带宽。
+These initial rankings come from one fixed-order sweep. Alone, they do not establish a generally optimal block, a general speedup or a stable ranking. Any reported effective bandwidth counts only one logical read and one logical write per valid element: `8*N` bytes for FP32. Holes in the input span are not useful bytes. This metric is not measured DRAM bandwidth.
 
-## 四进程平衡顺序确认
+## Four-process confirmation with balanced order
 
-[20261007-copy-confirm](../data/results/20261007-copy-confirm.json) 使用相同源码、二进制和 `N=4,194,317` 的输入，在四个新进程中执行预先固定的顺序：`64,128,512,256`、`128,256,64,512`、`256,512,128,64`、`512,64,256,128`。每种 block 出现在每个位置一次，十二种相邻前驱组合各出现一次。16 个 case 的完整输出和 guard 全部通过；每个进程退出并释放设备后才运行 CPU 检查。
+[20261007-copy-confirm](../data/results/20261007-copy-confirm.json) used the same source, binary and `N=4,194,317` input in four fresh processes with predetermined orders: `64,128,512,256`; `128,256,64,512`; `256,512,128,64`; and `512,64,256,128`. Each block size occupies each position once, and each of the twelve directed adjacent pairs occurs once. All outputs and guards passed for the 16 cases. CPU checking ran only after each device process exited and released its allocation.
 
-先对每个进程的十个批次取中位数，再以**进程**为分析单位报告 median [min, max]：
+The analysis first takes the median of each process's ten batches, then reports median [min, max] across **processes**:
 
-| block | 事件批内均值（µs），四进程 median [min, max] |
+| Block size | Event-batch mean (µs), four-process median [min, max] |
 | ---: | ---: |
 | 64 | 67.632 [67.363, 68.050] |
 | 128 | 58.113 [57.585, 58.184] |
 | 256 | 48.548 [48.268, 49.249] |
 | 512 | 44.376 [43.982, 44.460] |
 
-四轮的排序一致。进程内 `T64/T512` 的 median [min, max] 为 **1.528 [1.522, 1.532]**。这是这份 copy 和计时合同内的局部比值，说明首轮趋势不只出现在固定顺序中；它不构成通用最佳 block，也不是端到端算子收益。未锁频、未排除外部任务，平衡顺序不能排除所有非线性设备状态变化。
+All four processes produced the same ranking. The within-process `T64/T512` ratio is **1.528 [1.522, 1.532]**. This is a local ratio for this copy and timing contract. It shows that the initial trend survives the balanced orders; it does not establish a universal best block size or end-to-end operator gain. Clocks were not fixed and external jobs were not excluded. Balanced order does not eliminate all nonlinear changes in device state.
 
-## 正确性与环境边界
+## Correctness and environmental limits
 
-输入 `input[i] = float32(i)`，探针使用的索引范围内每个值唯一、有限且可精确表示。CPU oracle 检查全部最终输出位模式，以及每侧 32 个 guard word；本轮 49 个 case 的检查全部通过。copy 包含非整 block 尾部，gather 按 stride 检查实际读取的不同索引。完整 case 列表见 [native README](../experiments/native/README.md)。guard 只覆盖邻近边界写入；这不证明任意越界读取、远处写入或每次中间重复 launch 都已被检测。
+The input is `input[i] = float32(i)`. Values are unique, finite and exactly representable over the indices used. The CPU oracle checks every final output bit pattern and 32 guard words on each side. All 49 initial cases passed. Copy includes partial-block tails; gather checks the distinct indices actually selected by each stride. See the [native README](../experiments/native/README.md) for the full case list. Guards cover nearby boundary writes, not arbitrary invalid reads, distant writes or every intermediate repeated launch.
 
-本轮环境为 MACA SDK `3.5.3.18`、mxcc `1.0`（`6477545d4d`）。运行时报告设备为 MetaX C550、执行组宽度为 64、104 个 multiprocessor、L2 容量为 8 MiB。这些是该版本 API 的观测；其中 `waveSize` 与 `warpSize` 在已检查头文件中互为别名，不是两次独立硬件确认。探针没有使用这些属性推定缓存行为或峰值性能。
+The environment was MACA SDK `3.5.3.18` and mxcc `1.0` (`6477545d4d`). The runtime reported MetaX C550, execution-group width 64, 104 multiprocessors and 8 MiB of L2. These are observations from that API version. In the inspected headers, `waveSize` and `warpSize` are aliases, not independent hardware confirmations. The probe does not use them to infer cache behavior or peak performance.
 
-event 位于 default stream。区间排除分配、host-device 传输和文件写入，但可能包含 host 提交时的设备空闲间隙。另存的 host enqueue 时间包含逐 launch 的 `mcGetLastError` 调用，不能当作纯硬件 launch overhead。
+Events use the default stream. Their intervals exclude allocation, host-device transfers and file writes, but may include device idle gaps during host submission. Separately recorded host enqueue time includes `mcGetLastError` after every launch; it is not pure hardware launch overhead.
 
-`MACA_LAUNCH_MODE`、`MACA_LAUNCH_BLOCKING`、`MACA_DIRECT_DISPATCH` 在本轮均未设置。应用重复使用地址，没有显式 cache reset；运行时实际 cache 策略未验证，所以既不称热缓存实验，也不称未刷缓存实验。执行使用合作式 `local_serialized` 设备锁，外部活动未被排除，不声明整机独占。本轮未采集 profiler 指标，因而保留时间差而不指定唯一瓶颈。
+`MACA_LAUNCH_MODE`, `MACA_LAUNCH_BLOCKING` and `MACA_DIRECT_DISPATCH` were unset. Addresses repeat and the application applies no explicit cache reset. The effective runtime cache policy is unverified, so this is labeled neither a warm-cache experiment nor an unflushed-cache experiment. Execution uses a cooperative `local_serialized` device lock. External activity was not excluded, and system-wide exclusivity is not claimed. The initial sweep collected no profiler metrics, so the timing differences do not identify a unique bottleneck.
 
-## 下一步要区分什么
+## What the next controls must distinguish
 
-copy 的这次局部排序已经跨进程确认。后续改变工作集、尾部比例或数据映射时需重新验证，不能沿用此比值。gather 的首轮趋势仍需平衡次序复验，并设计固定输入跨度的对照来区分跨度与线程地址间距。
+The local copy ranking has been confirmed across processes. A changed working set, tail fraction or data mapping requires new validation; this ratio does not carry over automatically. The initial gather trend still needs confirmation with balanced order and a control that fixes input span while changing thread-address spacing.
 
-单独的 trace 用于检查实际 kernel 区间和编译资源字段，采集时的计时与无采集结果分开。只有测量能区分竞争解释之后，才将观察归因于具体机制；不由 launch 环境变量未设置推断热缓存。
+Separate traces examine actual kernel intervals and compiled-resource fields. Profiled timing remains separate from unprofiled measurements. Attribute an observation to a mechanism only when measurements distinguish competing explanations; unset launch environment variables do not establish warm caches.
 
-## 后继：固定唯一地址集合
+## Successor with a fixed unique address set
 
-[读取排列实验](memory-order.md)进一步固定了每个规模内的唯一输入地址集合、跨度和逻辑流量，并在进程内复用同一对 device buffer。六进程复验仍得到非单调的次序差异。这排除了原扫描中整体跨度变化的混杂，但短期复用窗口、转换与事务组织仍未被分离；不同排列也不是原 gather 的语义等价替换。
+The [read-order experiment](memory-order.md) fixes each size's unique input address set, span and logical traffic, while reusing the same pair of device buffers within a process. Six-process confirmation still found non-monotonic timing across permutations. This removes the changing whole-input span from the original sweep's confounds, but does not separate short-term reuse windows, address translation or transaction formation. The different permutations are also not semantics-preserving replacements for the original gather.

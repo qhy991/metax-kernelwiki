@@ -1,5 +1,7 @@
 # Native C550 probes
 
+[Home](../../README.md) · [Measured findings](../../wiki/memory-access.md) · [Launch bounds](../../wiki/launch-bounds.md)
+
 Standalone MACA C++ runtime probes and a standard-library Python oracle. The
 initial toolchain is mxcc 1.0.0, MACA 3.5.3.18. Source availability does not
 establish compilation or GPU correctness; retain those results separately.
@@ -13,13 +15,13 @@ compiler does not auto-detect a GPU. The initial inspected compiler reports
 xcore1000 as its internal target while the device reports XCORE1002; preserve
 that distinction in the run record.
 
-1. python3 experiments/native/native_probe.py prepare /tmp/metax-native-input
-2. MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 bash experiments/native/compile.sh /tmp/metax-native-probe
-3. mkdir /tmp/metax-native-output
+1. `python3 experiments/native/native_probe.py prepare /tmp/metax-native-input`
+2. `MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 bash experiments/native/compile.sh /tmp/metax-native-probe`
+3. `mkdir /tmp/metax-native-output`
 4. Acquire and bind exactly one C550 using the installed gpu-infra skill.
-5. /tmp/metax-native-probe --run /tmp/metax-native-input /tmp/metax-native-output
+5. `/tmp/metax-native-probe --run /tmp/metax-native-input /tmp/metax-native-output`
 6. Release the lease immediately after the device process exits.
-7. python3 experiments/native/native_probe.py check /tmp/metax-native-input /tmp/metax-native-output
+7. `python3 experiments/native/native_probe.py check /tmp/metax-native-input /tmp/metax-native-output`
 
 The program refuses anything other than exactly one visible device whose runtime
 name is MetaX C550. It records logical index 0, PCI bus ID and device properties.
@@ -149,23 +151,32 @@ They also verify the boundary plan, host plan rejection of unsupported blocks,
 and missing, duplicate, misordered or invalid optional first-launch records.
 They do not compile MACA C++ or prove GPU correctness.
 
-## 已验证的现有本机分配入口
+## Validated entry point to the existing local allocator
 
-本库提供 `scripts/cake_local_exec.py` 作为已有 Cake MACA local broker 的薄调用器。
-它要求明确的 allocator checkout、完整 commit、物理 device 和新的 receipt 路径；
-验证原 owner 的源码未修改后调用其 `admit_local_job`，再 exec 原生程序。
-没有自行创建锁协议，也没有在 broker 不可用时直接运行的 fallback。
+[`scripts/cake_local_exec.py`](../../scripts/cake_local_exec.py) is a thin adapter
+to the existing Cake MACA local broker. It requires an explicit allocator checkout,
+full commit ID, physical device, and fresh receipt path. After checking that the
+allocator's tracked source is unchanged, it calls the owner's `admit_local_job`
+and executes the native program. It implements no separate lock protocol and
+refuses direct execution when the broker is unavailable.
 
-`--lock-scope user` 是兼容默认值。若节点已有支持设备级锁的 owner，可显式使用
-`--lock-scope device`；调用器把物理设备、scope 和零排队时限直接交给该 owner，
-由 owner 设置可见设备并取得设备锁及旧用户锁的兼容共享模式。旧 owner 缺少此
-API 时拒绝运行，不退回另一种分配。仅更改可见设备环境变量不会缩小旧锁的范围。
+`--lock-scope user` is the compatibility default. On a node whose existing owner
+supports device locks, select `--lock-scope device` explicitly. The adapter passes
+the physical device, scope, and zero queue timeout to that owner. The owner sets
+device visibility and acquires the device lock together with a compatible shared
+hold on the legacy user lock. An older owner without this API is refused; the
+adapter does not substitute another allocation mode. Changing visibility variables
+alone does not narrow the legacy lock's scope.
 
-在本次节点，该旧版用户级锁排斥所有遵循同一 namespace 的作业；新设备级作业
-持有同一旧锁的共享模式，所以两者相互排斥。两种范围都是合作式
-`local_serialized`，不代表系统级独占。该调用器只适用于具有此现有 owner 的节点；
-其他节点需使用自身已验证的 allocator。
+On the tested node, the legacy user lock excludes every cooperating job in the
+same namespace. Device-scoped jobs hold that legacy lock in shared mode, so a
+legacy user-scoped job and a new device-scoped job exclude each other. Both scopes
+provide cooperative `local_serialized` admission, not system-wide exclusivity.
+Use this adapter only on nodes with the corresponding existing owner; other nodes
+must use their own validated allocator.
 
-执行时给 wrapper 外加进程超时。其继承的文件描述符随原生进程退出释放，
-所有 device 操作结束、输出落盘之后再在主机上运行 `check`。返回 0 与
-正确性通过分别检查；profile 工具还必须验证实际 GPU event，而非仅看退出码。
+Apply an external process timeout to the wrapper. Its inherited lock file
+descriptors are released when the native process exits. Run the host `check` only
+after all device operations finish and outputs are saved. Check process exit and
+numerical correctness separately. Profiling also requires actual GPU-event
+validation; the tool's exit code alone is insufficient.

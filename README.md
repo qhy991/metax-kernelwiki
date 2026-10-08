@@ -1,50 +1,64 @@
 # MetaX KernelWiki
 
-面向 **MetaX C550** 的内核知识库：从官方资料提出可检验的问题，在精确记录的 MACA 环境中运行小实验，再把有边界的结果写回机制页。
+An evidence-based kernel engineering wiki for **MetaX C550**. It connects MACA documentation, reproducible native probes, measured results, and the limits of each finding.
 
-借鉴 [metal-kernelwiki](https://github.com/qhy991/metal-kernelwiki) 的轻量检索和 [bw1100-kernelwiki](https://github.com/qhy991/bw1100-kernelwiki) 的机制与证据写法。独立于 open-cake-ir；这里的研究结果不自动修改 Compiler Target、校准或资格集合。
+The wiki is written in **English**. Original source URLs retain their published spelling. Its lightweight retrieval follows [metal-kernelwiki](https://github.com/qhy991/metal-kernelwiki); its mechanism-and-evidence approach follows [bw1100-kernelwiki](https://github.com/qhy991/bw1100-kernelwiki).
 
-## 阅读入口
+## Start here
 
-| 目的 | 入口 |
-| --- | --- |
-| 看现阶段做了什么、下一步测什么 | [研究进展](docs/research-log.md) |
-| 区分产品、原生 ISA 与兼容架构值 | [设备身份](wiki/device-identity.md) |
-| 查看矩阵精确性失败与复现证据 | [原生WMMA数值诊断](wiki/wmma-exactness.md) |
-| 查看wave64、shuffle子组与mask类型 | [collective边界实测](wiki/wave-collectives.md) |
-| 查看同结果转置的优化与尾部验证 | [转置分块与 padding](wiki/transpose.md) |
-| 查看固定地址集合的访存复验 | [读取排列与时间](wiki/memory-order.md) |
-| 理解 512/1024 线程与首次启动 | [launch bounds 与运行时重编译](wiki/launch-bounds.md) |
-| 查编译器与 Triton 原始依据 | [工具链](docs/toolchain.md) · [资料索引](docs/sources.md) |
-| 判断一个性能数字说明了什么 | [实验方法](docs/methodology.md) |
-| 重现实验 | [原生探针](experiments/native/README.md) · [读取排列](experiments/memory_order/README.md) · [转置控制](experiments/transpose/README.md) · [wave collectives](experiments/wave_collectives/README.md) |
-| 查参考库和来源边界 | [来源沿革](docs/provenance.md) |
+- **Writing a C550 kernel?** Read [device identity](wiki/device-identity.md) and the [MACA toolchain guide](docs/toolchain.md), then search for the operation or mechanism you need.
+- **Evaluating an optimization?** Read the [measurement contract](docs/methodology.md) and the relevant finding below. Check its inputs, software version, correctness result, and limitations.
+- **Following the research?** The [research log](docs/research-log.md) records completed experiments and open questions. The [source index](docs/sources.md) separates official documentation from upstream code and local evidence.
 
-## 当前实测范围
+## Measured findings
 
-首轮已在 C550 / MACA 3.5.3.18 完成 **49 个 case**，逐位检查 **22,042,413 个有效输出**及边界 guard。公开记录保存全部 **490 个计时批次**；四进程平衡顺序确认和含 1020 个 GPU kernel 的独立 trace 也已完成。缓存策略、时钟、导出时间单位及并发覆盖限制见[研究进展](docs/research-log.md)。
+The published device experiments use one **C550 with MACA 3.5.3.18**. Each page links to its frozen probe source and result records. A result applies to the stated device, software, inputs, and protocol.
 
-后继实验覆盖 [1024-thread 与重编译路径](wiki/launch-bounds.md)、[固定地址集合的读取排列](wiki/memory-order.md)，以及[同结果转置的分块、padding 和固定容量行距对照](wiki/transpose.md)。另有[完整wave的shuffle、整数归约与mask类型](wiki/wave-collectives.md)边界验证，并公开实际整数输出。[原生WMMA探针](wiki/wmma-exactness.md)则未满足预先固定的精确合同，失败与独立复现也已保留，后继输入回读/scalar对照进一步缩小范围，未接受WMMA性能。各轮保留独立源码、完整输出检查、进程级复验和 profiler 记录；具体条件与未覆盖范围以对应机制页为准。
+| Topic | What the evidence supports | Read more |
+| --- | --- | --- |
+| Device identity | The runtime, native ISA, compiler family, and compatibility architecture describe different interfaces. | [Identity and resource observations](wiki/device-identity.md) |
+| Global memory | Copy configurations have repeated observations; fixed-address read permutations isolate one source of variation while changing the output permutation. | [Copy and stride](wiki/memory-access.md) · [Read order](wiki/memory-order.md) |
+| Transpose | Tiling, shared-memory row pitch, and dynamic shared-memory requests have controlled comparisons. The request-size response depends on shape. | [Tiling and shared memory](wiki/transpose.md) |
+| Wave collectives | Full typed masks select 64- or 32-element reduction groups in the tested SDK. Physical wave width remains 64. | [Shuffle, reduction, and mask types](wiki/wave-collectives.md) |
+| Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
+| WMMA exactness | The strict numerical contract still fails. Device input snapshots match, and all 25 paired scalar-source matrices are exact; the WMMA residuals persist. No WMMA performance result is accepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
+| Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
 
-## 检索
+These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.
 
-Python 标准库即可，无需 GPU 或网络：
+## Search locally
+
+Retrieval uses only the Python standard library and requires no GPU or network:
 
 ```sh
 python3 scripts/wiki.py list
 python3 scripts/wiki.py search wave
-python3 scripts/wiki.py show maca-event-timing
+python3 scripts/wiki.py show c550-wmma-exactness
 python3 scripts/wiki.py validate
 ```
 
-`data/catalog.json` 是唯一检索目录；正文和原始来源通过路径/URL 引用。记录分别标注 `confidence`、`evidence_scope`、具体环境以及限制，不用一个“verified”覆盖文档、编译与设备测量的区别。
+[`data/catalog.json`](data/catalog.json) is the single retrieval index. Each entry names its confidence, evidence scope, sources, and limitations. The command-line tool reads the same pages linked above.
 
-## 证据规则
+## Reproduce an experiment
 
-- 文档声明、上游源码、历史观察、此次本机结果各自说明来源。C500 系列资料不自动成为 C550 的测量值。
-- 先准备输入和 CPU oracle，再通过机器现有分配入口获取设备；保存输出并退出设备进程后才做主机分析。原始运行输出在仓库外按 run id 保留。
-- 只有完整输出正确才报告该 case 的性能。事件批次时间包含事件之间的整个设备执行区间；记录应用的状态处理和运行时缓存策略是否经过验证，外部活动未排除时明确写出。
-- 原始 JSONL、编译日志、失败与负对照保留；整理后的有限结果进入 `data/results/`。不覆盖旧实验来“修正”结论。
-- 一个提交对应一版实验源码。后继问题用新的 run id；不会把 C550 的观察提升为其他 MetaX 产品的事实。
+Each probe guide defines preparation, compilation, device execution, and independent output checking:
 
-GPU 操作遵循 [gpu-infra 的租约生命周期](https://github.com/qhy991/gpu-infra/blob/main/skills/gpu-infra/SKILL.md#gpu-lease-lifecycle)。本库不实现第二个分配器。
+| Probe | Guide |
+| --- | --- |
+| Device properties, copy, stride, and launch bounds | [Native probes](experiments/native/README.md) |
+| Fixed-address read permutations | [Memory-order probe](experiments/memory_order/README.md) |
+| Transpose, row pitch, and shared-memory requests | [Transpose controls](experiments/transpose/README.md) |
+| Shuffle and integer reduction | [Wave collectives](experiments/wave_collectives/README.md) |
+| FP16 inputs, FP32 outputs, and scalar controls | [WMMA diagnostics](experiments/wmma/README.md) |
+
+Read the [methodology](docs/methodology.md) before running a probe. Prepare and compile before acquiring a GPU; use the node's existing allocator. Retain device outputs, end the device worker, verify release, then perform host analysis. GPU work follows the [gpu-infra lease lifecycle](https://github.com/qhy991/gpu-infra/blob/main/skills/gpu-infra/SKILL.md#gpu-lease-lifecycle).
+
+## Evidence and contributions
+
+- Keep full-output correctness checks ahead of performance acceptance. A failed diagnostic remains a failure; its timings do not become accepted performance data.
+- Record the timer, warmup, repeated samples, cache-state treatment, device identity, and concurrency limitations. Logical bandwidth is not measured DRAM bandwidth.
+- Preserve raw logs, failures, and negative controls outside the source checkout under distinct run IDs. Publish bounded projections in [`data/results/`](data/results/).
+- Commit probe changes before execution. A new question or changed contract uses a successor source and a new run; it does not overwrite earlier evidence.
+- Follow [AGENTS.md](AGENTS.md) when extending the wiki. See [provenance](docs/provenance.md) for repository discovery and reference boundaries.
+
+This repository is independent of open-cake-ir. Its findings do not automatically change Compiler Targets, calibrations, or qualification sets.

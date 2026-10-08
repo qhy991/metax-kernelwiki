@@ -8,7 +8,7 @@ The wiki is written in **English**. Original source URLs retain their published 
 
 - **Writing a C550 kernel?** Read [device identity](wiki/device-identity.md) and the [MACA toolchain guide](docs/toolchain.md), then search for the operation or mechanism you need.
 - **Evaluating an optimization?** Read the [measurement contract](docs/methodology.md) and the relevant finding below. Check its inputs, software version, correctness result, and limitations.
-- **Inspecting compiled code?** Follow [compiled MACA artifacts](docs/compiled-artifacts.md) for retained-binary extraction, bitcode decoding, and the separately measured module-loading routes.
+- **Inspecting compiled code?** Follow [compiled MACA artifacts](docs/compiled-artifacts.md) for retained-binary extraction, bitcode decoding, module-loading routes, and [runtime cache contents](docs/compiled-artifacts.md#retained-runtime-caches-contain-distinct-native-artifacts).
 - **Following the research?** The [research log](docs/research-log.md) records completed experiments and open questions. The [source index](docs/sources.md) separates official documentation from upstream code and local evidence.
 
 ## Measured findings

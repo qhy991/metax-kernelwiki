@@ -4,7 +4,7 @@
 
 The retained q7 executable contains **both LLVM bitcode and a native device ELF**. Installed SDK tools extract both payloads and decode the bitcode into LLVM IR. Separate module probes now load each extracted payload directly. This identifies the supplied input for those probes; the earlier host executable's payload selection and final native arithmetic remain unresolved.
 
-This page records a CPU-only inspection of the executable built from source [`9b7bef6`](https://github.com/qhy991/metax-kernelwiki/commit/9b7bef6ea79e7d71394f92a32987779d8fc18274) for the [single-launch q7 study](../wiki/wmma-exactness.md#standalone-q7-reproducer-one-launch-per-variant). It used MACA 3.5.3.18, MXCC `1.0.0 (6477545d4d)` and `-offload-arch=xcore1000`. The executable was neither rebuilt nor run during inspection. Its [bounded inspection record](../data/inspections/20261008-q7-binary.json) is separate from the unchanged [numerical result](../data/results/20261008-wmma-q7-repro.json).
+The original inspection examines the executable built from source [`9b7bef6`](https://github.com/qhy991/metax-kernelwiki/commit/9b7bef6ea79e7d71394f92a32987779d8fc18274) for the [single-launch q7 study](../wiki/wmma-exactness.md#standalone-q7-reproducer-one-launch-per-variant). It used MACA 3.5.3.18, MXCC `1.0.0 (6477545d4d)` and `-offload-arch=xcore1000`. The executable was neither rebuilt nor run during inspection. Its [bounded inspection record](../data/inspections/20261008-q7-binary.json) is separate from the unchanged [numerical result](../data/results/20261008-wmma-q7-repro.json). Later sections cover [producer output](#mcrtc-returns-a-wrapped-bitcode-buffer-in-a-separate-cpu-probe), [module-input routes](#separately-measured-module-input-routes) and [retained runtime caches](#retained-runtime-caches-contain-distinct-native-artifacts).
 
 ## What is in this executable?
 
@@ -122,6 +122,66 @@ The successor `60dc2fc` experiment supplies the retained wrappers directly to `m
 | 15,324-byte constructed q7 carrier | The earlier `3a08040` attempt remains rejected at loading. It is not retried in the wrapper experiment. |
 
 Each supplied-image receipt compares the complete buffer with its own retained original. These distinct origins are not interchangeable even when their wrapper headers share a convention. All four direct-wrapper processes leave one `.cache` and one `.cache.lock` file in their initially empty requested directories; the native control leaves none. The q7 trace nevertheless reports `is_recompiled=false` for both kernels. Neither file creation nor this event flag identifies cache contents, final instructions or a count of compilation operations. Those questions require separate evidence.
+
+## Retained runtime caches contain distinct native artifacts
+
+A subsequent **CPU-only inspection** examines the four cache snapshots retained by source `60dc2fc`. It creates no new module, compilation or GPU run. The [cache inspection record](../data/inspections/20261008-runtime-cache.json) binds every observation to that completed run and retains image comparisons separately from its unchanged numerical result.
+
+Each cache contains 321 bytes before a three-entry Clang offload bundle. The bundle has an empty host entry, a native ELF labeled `maca-mxc-metax-macahca--xcore1002`, and wrapped bitcode labeled with the same target plus `-bc`. All offsets below are absolute file offsets:
+
+| Retained snapshot | Cache bytes | Native ELF offset / bytes | Wrapped bitcode offset / bytes |
+| --- | ---: | --- | --- |
+| MCRTC producer load/lookup | 28,173 | 4,417 / 13,912 | 20,801 / 7,360 |
+| Each of three q7 wrapper collections | 36,093 | 4,417 / 18,232 | 24,897 / 11,184 |
+
+The bundle descriptor table occupies 202 bytes, ending at cache offset 523. Payload ranges are bounded and nonoverlapping, alignment gaps are zero, and each file ends with the 12-byte `__FILE_END__` marker. Each corresponding `.cache.lock` is empty. Independent parsing agrees with SDK bundler extraction for the representative producer and q7 artifacts. This is an observation of these files; the cache header, filename-key algorithm and lock protocol remain undocumented in the checked sources.
+
+The initial 321 bytes contain a 128-byte fragment matching the beginning of the supplied wrapper, followed by command-like text naming `mxcc` and `--offload-arch=xcore1002`. The fragment is too short to be the declared complete bitcode module. The text has no argument separators and is not a compiler invocation receipt; these fields do not define a supported cache serializer.
+
+### Compare the stored native artifacts
+
+All three q7 caches contain identical native payloads and identical bitcode payloads. Their 18,232-byte native ELF differs from the earlier 18,232-byte ELF extracted from the original executable. Comparisons use the corresponding named symbol ranges, accounting for changed file offsets:
+
+| Native field | Original ELF | Cached ELF |
+| --- | ---: | ---: |
+| `.text` bytes | 3,400 | 3,656 |
+| WMMA symbol offset / bytes | 8,704 / 1,304 | 8,960 / 1,296 |
+| Scalar symbol offset / bytes | 10,240 / 1,352 | 10,496 / 1,352 |
+| WMMA `.mtreg_count` / `.streg_count` | 28 / 20 | 28 / 21 |
+| Scalar `.mtreg_count` / `.streg_count` | 36 / 19 | 36 / 19 |
+
+Both kernel symbol ranges differ in bytes; equal scalar length does not mean identical content. The cached note has a 3,335-byte descriptor, compared with 3,493 bytes in the original. Both kernels retain note fields `.max_block_size=512`, `.kernarg_size_bytes=112`, and zero shared/private memory. The producer cache separately contains an eight-byte `mcrtc_format_probe` symbol and a 1,294-byte note descriptor. Its earlier load-only stage still has no launch or numerical evaluation.
+
+These observations establish different stored native artifacts. They do not identify native instructions, prove which cached bytes ran, or explain the arithmetic residual. Resource-note fields and symbol lengths do not establish hardware ceilings, occupancy or instruction counts.
+
+### Decode the changed cached bitcode
+
+The producer cache's complete 7,360-byte bitcode wrapper equals its original producer output. The q7 cached wrapper differs from its 11,216-byte input: it is 11,184 bytes, with a 20-byte header, 11,152-byte body and 12 zero padding bytes. Installed `llvm-dis` 19.1.3 decodes the retained cached wrapper directly; no source is recompiled.
+
+The cached q7 module keeps triple `mxc-metax-macahca`, the `metaxgpu_kernel` calling convention and each kernel's `target-cpu="xcore1000"` / `target-features="+xcore1000"`. These IR attributes and the bundle's `xcore1002` labels are separately observed fields. The WMMA body removes a duplicate integer loop-bound `and` expression, reducing its static `and` count from 27 to 26. The scalar body shares a B-address OR expression, reducing its static `or` count from 31 to 24. SSA uses and labels change with these edits.
+
+Five static MMA calls remain in WMMA. Scalar retains sixteen FP16-to-FP32 conversions and eight `fmul contract` / `fadd contract` pairs. This selected textual comparison is not an equivalence proof, a compiler-pass trace or a native-arithmetic explanation. The previous q7 exactness failure remains unchanged.
+
+### Reproduce the CPU extraction for these snapshots
+
+For these retained files only, copy bytes from offset 321 through EOF into a fresh `cache.bundle`, after checking the cache size, unique bundle magic and bounded descriptors against the record. The successfully used SDK routes then select the `xcore1002` entries:
+
+```sh
+set -eu
+SDK_BIN=/opt/maca-3.5.3/mxgpu_llvm/bin
+export MACA_VISIBLE_DEVICES= CUDA_VISIBLE_DEVICES= HIP_VISIBLE_DEVICES= ROCR_VISIBLE_DEVICES=
+export LD_LIBRARY_PATH=/opt/maca-3.5.3/lib
+"$SDK_BIN/clang-offload-bundler" --type=bc --list --input=cache.bundle
+"$SDK_BIN/clang-offload-bundler" --type=bc --unbundle --input=cache.bundle \
+  --targets=maca-mxc-metax-macahca--xcore1002 --output=cached-device.elf
+"$SDK_BIN/clang-offload-bundler" --type=bc --unbundle --input=cache.bundle \
+  --targets=maca-mxc-metax-macahca--xcore1002-bc --output=cached.bc
+"$SDK_BIN/llvm-dis" cached.bc -o cached.ll
+readelf -h -SW -n cached-device.elf
+"$SDK_BIN/llvm-nm" --format=posix cached-device.elf
+```
+
+Use a fresh output directory and preserve the retained cache. These specimen-specific offsets are not a general cache-format API. The inspection retains 17 successful bounded CPU commands and empty observed process groups after exit. No native decoder, compiler invocation trace, new numerical acceptance or performance result was obtained. A later explicit cached-native experiment would need its own frozen plan and admission.
 
 [bundle]: https://releases.llvm.org/19.1.0/tools/clang/docs/ClangOffloadBundler.html#bundled-binary-file-layout
 [bitcode]: https://releases.llvm.org/19.1.0/docs/BitCodeFormat.html#bitcode-wrapper-format

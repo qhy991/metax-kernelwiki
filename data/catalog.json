@@ -44,7 +44,10 @@
         "MCRTC",
         "runtime compilation",
         "producer serialization",
-        "wrapped bitcode"
+        "wrapped bitcode",
+        "runtime cache",
+        "cached ELF",
+        "cache inspection"
       ],
       "confidence": "documented",
       "evidence_scope": "upstream-source",
@@ -55,9 +58,10 @@
         "docs/compiled-artifacts.md",
         "experiments/mcrtc_format/README.md",
         "data/inspections/20261008-mcrtc-producer.json",
-        "data/results/20261008-wmma-wrapped-q7.json"
+        "data/results/20261008-wmma-wrapped-q7.json",
+        "data/inspections/20261008-runtime-cache.json"
       ],
-      "limitations": "Upstream guidance, CPU artifact inspections and device module probes have separate scopes. Direct-wrapper loading is measured only for the retained producer and q7 inputs; the constructed-carrier refusal remains. No general bitcode compatibility, final-instruction identity or C550 performance is established."
+      "limitations": "Upstream guidance, CPU artifact inspections and device module probes have separate scopes. Direct-wrapper loading is measured only for the retained producer and q7 inputs; the constructed-carrier refusal remains. No general bitcode compatibility, final-instruction identity or C550 performance is established. A later CPU inspection finds changed cached native and bitcode artifacts; it adds no execution or numerical acceptance."
     },
     {
       "id": "maca-event-timing",
@@ -284,7 +288,10 @@
         "mcErrorNoKernelImageForDevice",
         "direct wrapper",
         "wrapped bitcode",
-        "producer load lookup"
+        "producer load lookup",
+        "runtime cache",
+        "cached ELF",
+        "cache inspection"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -306,10 +313,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/3a0804098493b2bc750097e0ca6720a2d2449780",
         "data/results/20261008-wmma-bitcode-route.json",
         "https://github.com/qhy991/metax-kernelwiki/tree/60dc2fcde14fa5190ba6639a0a729eaf05ecb851",
-        "data/results/20261008-wmma-wrapped-q7.json"
+        "data/results/20261008-wmma-wrapped-q7.json",
+        "data/inspections/20261008-runtime-cache.json"
       ],
       "result": "data/results/20261008-wmma-wrapped-q7.json",
-      "limitations": "The primary numerical result covers one native q7 control and three original-wrapper collections. Each WMMA output fails exact acceptance at C00; scalar controls pass. A separate producer wrapper passes load/lookup without a launch or numerical evaluation. The earlier constructed carrier remains refused. General bitcode support, prior fatbin selection, final instructions, arithmetic cause and performance remain unqualified."
+      "limitations": "The primary result covers one native q7 control and three direct-wrapper pairs: WMMA fails exact C00, scalar passes. Producer load/lookup adds no numerical result; the earlier carrier remains refused. Later cache inspection finds changed artifacts without new execution. General format support, final instructions, arithmetic cause and performance remain unqualified."
     }
   ]
 }

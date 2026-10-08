@@ -1,0 +1,978 @@
+{
+  "schema": "metax-kernelwiki.runtime-cache-inspection.v1",
+  "inspection_id": "20261008-wmma-cache-inspection",
+  "inspected_date_utc": "2026-10-08",
+  "evidence_scope": "local-static-artifact-inspection",
+  "input_probe_source_commit": "60dc2fcde14fa5190ba6639a0a729eaf05ecb851",
+  "input_run": "20261008-wmma-wrapped-q7",
+  "input_result": "data/results/20261008-wmma-wrapped-q7.json",
+  "input_publication_commit": "3c2c9cf1e42ae9b26dedfe0f917becf80cfad3ed",
+  "question": "What artifacts do the retained direct-wrapper caches contain, and are those artifacts identical to the originally supplied inputs?",
+  "origins": {
+    "q7_device_source_commit": "9b7bef6ea79e7d71394f92a32987779d8fc18274",
+    "q7_original_extraction": "data/inspections/20261008-q7-binary.json",
+    "producer_source_commit": "83f6384eddea50fd554022018c8073888a8b0d8a",
+    "producer_original_output": "data/inspections/20261008-mcrtc-producer.json"
+  },
+  "environment": {
+    "runtime_of_input_run": "3.5.3.18",
+    "sdk_inspection_root": "/opt/maca-3.5.3",
+    "bundler_version": "clang-offload-bundler version 1.0.0 (6477545d4d)",
+    "llvm_dis_version": "LLVM (http://llvm.org/):\n  LLVM version 19.1.3\n  Optimized build.",
+    "device_visibility_masks": {
+      "MACA_VISIBLE_DEVICES": "",
+      "CUDA_VISIBLE_DEVICES": "",
+      "HIP_VISIBLE_DEVICES": "",
+      "ROCR_VISIBLE_DEVICES": ""
+    }
+  },
+  "stages": [
+    {
+      "stage": "producer-load",
+      "cache_bytes": 28173,
+      "lock_bytes": 0,
+      "bundle_offset_in_cache": 321,
+      "bundle_bytes": 27852,
+      "descriptor_end_in_bundle": 202,
+      "entries": [
+        {
+          "target": "host-x86_64-unknown-linux-gnu",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 0
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 13912
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002-bc",
+          "offset_in_bundle": 20480,
+          "offset_in_cache": 20801,
+          "size": 7360
+        }
+      ],
+      "zero_alignment_gaps": [
+        {
+          "offset_in_bundle": 202,
+          "zero_bytes": 3894
+        },
+        {
+          "offset_in_bundle": 18008,
+          "zero_bytes": 2472
+        }
+      ],
+      "trailer": {
+        "offset_in_bundle": 27840,
+        "bytes": 12,
+        "text": "__FILE_END__"
+      },
+      "envelope": {
+        "bytes": 321,
+        "format_contract": "unknown",
+        "wrapper_signature_offsets": [
+          96
+        ],
+        "observed_input_prefix": {
+          "cache_offset": 96,
+          "bytes": 128,
+          "equal_to_supplied_image_prefix": true
+        },
+        "command_like_text": "/opt/maca/mxgpu_llvm/bin/mxcc--fatbin--input-is-device--maca-link--offload-arch=xcore1002",
+        "text_is_invocation_receipt": false
+      },
+      "bitcode_wrapper": {
+        "bytes": 7360,
+        "version": 0,
+        "body_offset": 20,
+        "body_bytes": 7332,
+        "cpu_type_raw": 255,
+        "zero_tail_bytes": 8
+      },
+      "native_elf": {
+        "class": "ELF64",
+        "endianness": "little",
+        "machine_raw": 253,
+        "flags_raw": 1,
+        "section_count": 15,
+        "text_section": {
+          "offset": 4096,
+          "size": 520
+        },
+        "note_descriptor_bytes": 1294,
+        "kernels": [
+          {
+            "symbol": "mcrtc_format_probe",
+            "file_offset": 4608,
+            "symbol_bytes": 8,
+            "metadata": {
+              ".mtreg_count": 1,
+              ".streg_count": 4,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 80
+            }
+          }
+        ]
+      },
+      "cached_bitcode_vs_supplied_image": {
+        "left_bytes": 7360,
+        "right_bytes": 7360,
+        "equal": true,
+        "different_positions_in_common_extent": 0,
+        "first_difference_in_common_extent": null,
+        "unmatched_tail_bytes": 0
+      }
+    },
+    {
+      "stage": "wrapped-wmma-first",
+      "cache_bytes": 36093,
+      "lock_bytes": 0,
+      "bundle_offset_in_cache": 321,
+      "bundle_bytes": 35772,
+      "descriptor_end_in_bundle": 202,
+      "entries": [
+        {
+          "target": "host-x86_64-unknown-linux-gnu",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 0
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 18232
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002-bc",
+          "offset_in_bundle": 24576,
+          "offset_in_cache": 24897,
+          "size": 11184
+        }
+      ],
+      "zero_alignment_gaps": [
+        {
+          "offset_in_bundle": 202,
+          "zero_bytes": 3894
+        },
+        {
+          "offset_in_bundle": 22328,
+          "zero_bytes": 2248
+        }
+      ],
+      "trailer": {
+        "offset_in_bundle": 35760,
+        "bytes": 12,
+        "text": "__FILE_END__"
+      },
+      "envelope": {
+        "bytes": 321,
+        "format_contract": "unknown",
+        "wrapper_signature_offsets": [
+          96
+        ],
+        "observed_input_prefix": {
+          "cache_offset": 96,
+          "bytes": 128,
+          "equal_to_supplied_image_prefix": true
+        },
+        "command_like_text": "/opt/maca/mxgpu_llvm/bin/mxcc--fatbin--input-is-device--maca-link--offload-arch=xcore1002",
+        "text_is_invocation_receipt": false
+      },
+      "bitcode_wrapper": {
+        "bytes": 11184,
+        "version": 0,
+        "body_offset": 20,
+        "body_bytes": 11152,
+        "cpu_type_raw": 255,
+        "zero_tail_bytes": 12
+      },
+      "native_elf": {
+        "class": "ELF64",
+        "endianness": "little",
+        "machine_raw": 253,
+        "flags_raw": 1,
+        "section_count": 15,
+        "text_section": {
+          "offset": 8192,
+          "size": 3656
+        },
+        "note_descriptor_bytes": 3335,
+        "kernels": [
+          {
+            "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 8960,
+            "symbol_bytes": 1296,
+            "metadata": {
+              ".mtreg_count": 28,
+              ".streg_count": 21,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          },
+          {
+            "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 10496,
+            "symbol_bytes": 1352,
+            "metadata": {
+              ".mtreg_count": 36,
+              ".streg_count": 19,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          }
+        ]
+      },
+      "cached_bitcode_vs_supplied_image": {
+        "left_bytes": 11184,
+        "right_bytes": 11216,
+        "equal": false,
+        "different_positions_in_common_extent": 3145,
+        "first_difference_in_common_extent": 12,
+        "unmatched_tail_bytes": 32
+      },
+      "cached_native_vs_original_elf": {
+        "left_bytes": 18232,
+        "right_bytes": 18232,
+        "equal": false,
+        "different_positions_in_common_extent": 6029,
+        "first_difference_in_common_extent": 152,
+        "unmatched_tail_bytes": 0
+      },
+      "native_kernel_byte_relations": [
+        {
+          "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 8960,
+          "offset_in_original_elf": 8704,
+          "left_bytes": 1296,
+          "right_bytes": 1304,
+          "equal": false,
+          "different_positions_in_common_extent": 850,
+          "first_difference_in_common_extent": 2,
+          "unmatched_tail_bytes": 8
+        },
+        {
+          "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 10496,
+          "offset_in_original_elf": 10240,
+          "left_bytes": 1352,
+          "right_bytes": 1352,
+          "equal": false,
+          "different_positions_in_common_extent": 65,
+          "first_difference_in_common_extent": 208,
+          "unmatched_tail_bytes": 0
+        }
+      ]
+    },
+    {
+      "stage": "wrapped-scalar-first",
+      "cache_bytes": 36093,
+      "lock_bytes": 0,
+      "bundle_offset_in_cache": 321,
+      "bundle_bytes": 35772,
+      "descriptor_end_in_bundle": 202,
+      "entries": [
+        {
+          "target": "host-x86_64-unknown-linux-gnu",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 0
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 18232
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002-bc",
+          "offset_in_bundle": 24576,
+          "offset_in_cache": 24897,
+          "size": 11184
+        }
+      ],
+      "zero_alignment_gaps": [
+        {
+          "offset_in_bundle": 202,
+          "zero_bytes": 3894
+        },
+        {
+          "offset_in_bundle": 22328,
+          "zero_bytes": 2248
+        }
+      ],
+      "trailer": {
+        "offset_in_bundle": 35760,
+        "bytes": 12,
+        "text": "__FILE_END__"
+      },
+      "envelope": {
+        "bytes": 321,
+        "format_contract": "unknown",
+        "wrapper_signature_offsets": [
+          96
+        ],
+        "observed_input_prefix": {
+          "cache_offset": 96,
+          "bytes": 128,
+          "equal_to_supplied_image_prefix": true
+        },
+        "command_like_text": "/opt/maca/mxgpu_llvm/bin/mxcc--fatbin--input-is-device--maca-link--offload-arch=xcore1002",
+        "text_is_invocation_receipt": false
+      },
+      "bitcode_wrapper": {
+        "bytes": 11184,
+        "version": 0,
+        "body_offset": 20,
+        "body_bytes": 11152,
+        "cpu_type_raw": 255,
+        "zero_tail_bytes": 12
+      },
+      "native_elf": {
+        "class": "ELF64",
+        "endianness": "little",
+        "machine_raw": 253,
+        "flags_raw": 1,
+        "section_count": 15,
+        "text_section": {
+          "offset": 8192,
+          "size": 3656
+        },
+        "note_descriptor_bytes": 3335,
+        "kernels": [
+          {
+            "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 8960,
+            "symbol_bytes": 1296,
+            "metadata": {
+              ".mtreg_count": 28,
+              ".streg_count": 21,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          },
+          {
+            "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 10496,
+            "symbol_bytes": 1352,
+            "metadata": {
+              ".mtreg_count": 36,
+              ".streg_count": 19,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          }
+        ]
+      },
+      "cached_bitcode_vs_supplied_image": {
+        "left_bytes": 11184,
+        "right_bytes": 11216,
+        "equal": false,
+        "different_positions_in_common_extent": 3145,
+        "first_difference_in_common_extent": 12,
+        "unmatched_tail_bytes": 32
+      },
+      "cached_native_vs_original_elf": {
+        "left_bytes": 18232,
+        "right_bytes": 18232,
+        "equal": false,
+        "different_positions_in_common_extent": 6029,
+        "first_difference_in_common_extent": 152,
+        "unmatched_tail_bytes": 0
+      },
+      "native_kernel_byte_relations": [
+        {
+          "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 8960,
+          "offset_in_original_elf": 8704,
+          "left_bytes": 1296,
+          "right_bytes": 1304,
+          "equal": false,
+          "different_positions_in_common_extent": 850,
+          "first_difference_in_common_extent": 2,
+          "unmatched_tail_bytes": 8
+        },
+        {
+          "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 10496,
+          "offset_in_original_elf": 10240,
+          "left_bytes": 1352,
+          "right_bytes": 1352,
+          "equal": false,
+          "different_positions_in_common_extent": 65,
+          "first_difference_in_common_extent": 208,
+          "unmatched_tail_bytes": 0
+        }
+      ]
+    },
+    {
+      "stage": "trace-wrapped-wmma-first",
+      "cache_bytes": 36093,
+      "lock_bytes": 0,
+      "bundle_offset_in_cache": 321,
+      "bundle_bytes": 35772,
+      "descriptor_end_in_bundle": 202,
+      "entries": [
+        {
+          "target": "host-x86_64-unknown-linux-gnu",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 0
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002",
+          "offset_in_bundle": 4096,
+          "offset_in_cache": 4417,
+          "size": 18232
+        },
+        {
+          "target": "maca-mxc-metax-macahca--xcore1002-bc",
+          "offset_in_bundle": 24576,
+          "offset_in_cache": 24897,
+          "size": 11184
+        }
+      ],
+      "zero_alignment_gaps": [
+        {
+          "offset_in_bundle": 202,
+          "zero_bytes": 3894
+        },
+        {
+          "offset_in_bundle": 22328,
+          "zero_bytes": 2248
+        }
+      ],
+      "trailer": {
+        "offset_in_bundle": 35760,
+        "bytes": 12,
+        "text": "__FILE_END__"
+      },
+      "envelope": {
+        "bytes": 321,
+        "format_contract": "unknown",
+        "wrapper_signature_offsets": [
+          96
+        ],
+        "observed_input_prefix": {
+          "cache_offset": 96,
+          "bytes": 128,
+          "equal_to_supplied_image_prefix": true
+        },
+        "command_like_text": "/opt/maca/mxgpu_llvm/bin/mxcc--fatbin--input-is-device--maca-link--offload-arch=xcore1002",
+        "text_is_invocation_receipt": false
+      },
+      "bitcode_wrapper": {
+        "bytes": 11184,
+        "version": 0,
+        "body_offset": 20,
+        "body_bytes": 11152,
+        "cpu_type_raw": 255,
+        "zero_tail_bytes": 12
+      },
+      "native_elf": {
+        "class": "ELF64",
+        "endianness": "little",
+        "machine_raw": 253,
+        "flags_raw": 1,
+        "section_count": 15,
+        "text_section": {
+          "offset": 8192,
+          "size": 3656
+        },
+        "note_descriptor_bytes": 3335,
+        "kernels": [
+          {
+            "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 8960,
+            "symbol_bytes": 1296,
+            "metadata": {
+              ".mtreg_count": 28,
+              ".streg_count": 21,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          },
+          {
+            "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+            "file_offset": 10496,
+            "symbol_bytes": 1352,
+            "metadata": {
+              ".mtreg_count": 36,
+              ".streg_count": 19,
+              ".max_block_size": 512,
+              ".private_memory_size": 0,
+              ".share_memory_size": 0,
+              ".kernarg_size_bytes": 112
+            }
+          }
+        ]
+      },
+      "cached_bitcode_vs_supplied_image": {
+        "left_bytes": 11184,
+        "right_bytes": 11216,
+        "equal": false,
+        "different_positions_in_common_extent": 3145,
+        "first_difference_in_common_extent": 12,
+        "unmatched_tail_bytes": 32
+      },
+      "cached_native_vs_original_elf": {
+        "left_bytes": 18232,
+        "right_bytes": 18232,
+        "equal": false,
+        "different_positions_in_common_extent": 6029,
+        "first_difference_in_common_extent": 152,
+        "unmatched_tail_bytes": 0
+      },
+      "native_kernel_byte_relations": [
+        {
+          "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 8960,
+          "offset_in_original_elf": 8704,
+          "left_bytes": 1296,
+          "right_bytes": 1304,
+          "equal": false,
+          "different_positions_in_common_extent": 850,
+          "first_difference_in_common_extent": 2,
+          "unmatched_tail_bytes": 8
+        },
+        {
+          "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+          "offset_in_cached_elf": 10496,
+          "offset_in_original_elf": 10240,
+          "left_bytes": 1352,
+          "right_bytes": 1352,
+          "equal": false,
+          "different_positions_in_common_extent": 65,
+          "first_difference_in_common_extent": 208,
+          "unmatched_tail_bytes": 0
+        }
+      ]
+    }
+  ],
+  "cross_stage_artifact_relations": [
+    {
+      "baseline_stage": "wrapped-wmma-first",
+      "stage": "wrapped-scalar-first",
+      "artifact": "native",
+      "left_bytes": 18232,
+      "right_bytes": 18232,
+      "equal": true,
+      "different_positions_in_common_extent": 0,
+      "first_difference_in_common_extent": null,
+      "unmatched_tail_bytes": 0
+    },
+    {
+      "baseline_stage": "wrapped-wmma-first",
+      "stage": "wrapped-scalar-first",
+      "artifact": "bitcode",
+      "left_bytes": 11184,
+      "right_bytes": 11184,
+      "equal": true,
+      "different_positions_in_common_extent": 0,
+      "first_difference_in_common_extent": null,
+      "unmatched_tail_bytes": 0
+    },
+    {
+      "baseline_stage": "wrapped-wmma-first",
+      "stage": "trace-wrapped-wmma-first",
+      "artifact": "native",
+      "left_bytes": 18232,
+      "right_bytes": 18232,
+      "equal": true,
+      "different_positions_in_common_extent": 0,
+      "first_difference_in_common_extent": null,
+      "unmatched_tail_bytes": 0
+    },
+    {
+      "baseline_stage": "wrapped-wmma-first",
+      "stage": "trace-wrapped-wmma-first",
+      "artifact": "bitcode",
+      "left_bytes": 11184,
+      "right_bytes": 11184,
+      "equal": true,
+      "different_positions_in_common_extent": 0,
+      "first_difference_in_common_extent": null,
+      "unmatched_tail_bytes": 0
+    }
+  ],
+  "cached_q7_ir": {
+    "source": "SDK llvm-dis applied to retained cached.bc; no new source or IR compilation",
+    "source_filename": "ld-temp.o",
+    "target_triple": "mxc-metax-macahca",
+    "functions": [
+      {
+        "variant": "wmma",
+        "calling_convention": "metaxgpu_kernel",
+        "definition": "define metaxgpu_kernel void @_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj(ptr addrspace(4) nocapture noundef readonly %0, ptr addrspace(4) nocapture noundef readonly %1, ptr addrspace(1) nocapture noundef writeonly %2, i32 noundef %3) local_unnamed_addr #5 comdat {",
+        "target_cpu": "xcore1000",
+        "target_features": "+xcore1000",
+        "static_mma_intrinsic_calls": 5,
+        "static_fp16_conversion_calls": 0,
+        "static_fmul_contract": 0,
+        "static_fadd_contract": 0
+      },
+      {
+        "variant": "scalar",
+        "calling_convention": "metaxgpu_kernel",
+        "definition": "define metaxgpu_kernel void @_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj(ptr addrspace(4) nocapture noundef readonly %0, ptr addrspace(4) nocapture noundef readonly %1, ptr addrspace(1) nocapture noundef writeonly %2, i32 noundef %3) local_unnamed_addr #7 comdat {",
+        "target_cpu": "xcore1000",
+        "target_features": "+xcore1000",
+        "static_mma_intrinsic_calls": 0,
+        "static_fp16_conversion_calls": 16,
+        "static_fmul_contract": 8,
+        "static_fadd_contract": 8
+      }
+    ],
+    "selected_textual_differences": [
+      {
+        "function": "wmma",
+        "observation": "Duplicate loop-bound and expression removed; uses and numeric SSA labels change.",
+        "original_and_count": 27,
+        "cached_and_count": 26
+      },
+      {
+        "function": "scalar",
+        "observation": "B-address OR expression is shared across the unrolled accesses; uses and numeric SSA labels change.",
+        "original_or_count": 31,
+        "cached_or_count": 24
+      }
+    ],
+    "full_text_diff_from_original": "Retained privately; ModuleID paths and both kernel bodies differ. No equivalence proof or compiler-pass attribution is claimed.",
+    "scope": "Static IR observations; not dynamic operation counts, executed native instructions or intermediate precision guarantees."
+  },
+  "sdk_extraction": {
+    "representative_stages": [
+      "producer-load",
+      "wrapped-wmma-first"
+    ],
+    "checked_payload_ranges": [
+      {
+        "stage": "producer-load",
+        "extractions": [
+          {
+            "file": "cached-device.elf",
+            "bytes": 13912,
+            "equals_declared_bundle_range": true
+          },
+          {
+            "file": "cached.bc",
+            "bytes": 7360,
+            "equals_declared_bundle_range": true
+          }
+        ]
+      },
+      {
+        "stage": "wrapped-wmma-first",
+        "extractions": [
+          {
+            "file": "cached-device.elf",
+            "bytes": 18232,
+            "equals_declared_bundle_range": true
+          },
+          {
+            "file": "cached.bc",
+            "bytes": 11184,
+            "equals_declared_bundle_range": true
+          }
+        ]
+      }
+    ],
+    "producer_ir_redecoded": false,
+    "producer_reason": "Its complete cached bitcode equals the previously decoded original producer output.",
+    "commands": [
+      {
+        "name": "bundler-version",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--version"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "llvm-dis-version",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-dis",
+          "--version"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/extract-cached-device.elf",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/producer-load/cache.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1002",
+          "--output=inspection/producer-load/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/extract-cached.bc",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/producer-load/cache.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1002-bc",
+          "--output=inspection/producer-load/cached.bc"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/list-bundles",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--list",
+          "--input=inspection/producer-load/cache.bundle"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/native-header",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-h",
+          "inspection/producer-load/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/native-notes",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-n",
+          "inspection/producer-load/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/native-sections",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-SW",
+          "inspection/producer-load/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "producer-load/native-symbols",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-nm",
+          "--format=posix",
+          "inspection/producer-load/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/decode-cached-bitcode",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-dis",
+          "inspection/wrapped-wmma-first/cached.bc",
+          "-o",
+          "inspection/wrapped-wmma-first/cached.ll"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/extract-cached-device.elf",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/wrapped-wmma-first/cache.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1002",
+          "--output=inspection/wrapped-wmma-first/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/extract-cached.bc",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/wrapped-wmma-first/cache.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1002-bc",
+          "--output=inspection/wrapped-wmma-first/cached.bc"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/list-bundles",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--list",
+          "--input=inspection/wrapped-wmma-first/cache.bundle"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/native-header",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-h",
+          "inspection/wrapped-wmma-first/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/native-notes",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-n",
+          "inspection/wrapped-wmma-first/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/native-sections",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "readelf",
+          "-SW",
+          "inspection/wrapped-wmma-first/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      },
+      {
+        "name": "wrapped-wmma-first/native-symbols",
+        "command": [
+          "timeout",
+          "--signal=TERM",
+          "--kill-after=5s",
+          "30s",
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-nm",
+          "--format=posix",
+          "inspection/wrapped-wmma-first/cached-device.elf"
+        ],
+        "exit": 0,
+        "observed_process_group_empty": true
+      }
+    ]
+  },
+  "verification": {
+    "independent_bounded_cache_parser": "passed",
+    "all_four_cache_and_lock_snapshots_examined": true,
+    "new_identity_boundary": "Direct cache-to-original byte relations, including kernel symbol intervals, plus cross-stage cached payload equality. No digests computed.",
+    "independent_parser_limit": "Envelope semantics, bitcode bodies and native instruction payloads remain opaque to the structural parser; SDK decoding separately covers cached q7 bitcode."
+  },
+  "scope": {
+    "new_compilation": false,
+    "new_device_execution": false,
+    "gpu_lease_acquired": false,
+    "native_isa_decoded": false,
+    "executed_native_image_identity_established": false,
+    "cache_schema_contract_established": false,
+    "compiler_invocation_trace_obtained": false,
+    "new_numerical_acceptance": false,
+    "new_performance_measurement": false,
+    "limitations": [
+      "Bundle target labels xcore1002 and IR target-cpu/features xcore1000 are separately observed fields, not interchangeable hardware identities.",
+      "Command-like envelope text is not a command invocation receipt, and its serialization/key/lock semantics remain undocumented in the checked sources.",
+      "A wrapper-looking128-byte prefix is only a matching input fragment; it is not a complete second bitcode module.",
+      "Changed cached native symbol bytes prove a distinct stored artifact, not which instructions ran or which compiler pass changed them.",
+      "Kernel symbol byte lengths and static IR call counts are not native instruction counts; the arithmetic cause remains unresolved.",
+      "False is_recompiled flags in the prior trace do not establish that these cache artifacts equal the original ELF or count compilation operations.",
+      "The producer image was only loaded/looked up in its device run; cached native code does not add a kernel launch or numerical result.",
+      "The earlier carrier refusal and strict q7 failure remain unchanged. No open-cake-ir promotion or performance conclusion.",
+      "Complete caches, extracted files, IR and raw tool/process logs remain in private evidence; public tool paths are normalized."
+    ]
+  }
+}

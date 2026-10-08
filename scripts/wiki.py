@@ -7,6 +7,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIDENCE = {"documented", "source-reported", "inferred", "experimental", "locally-measured"}
 SCOPES = {"external-observation", "upstream-source", "protocol", "compile-only", "device-correctness", "local-measurement"}
+SUMMARY_START = "<!-- kernelwiki:summary:start -->"
+SUMMARY_END = "<!-- kernelwiki:summary:end -->"
+
+
+def extract_summary(page):
+    if SUMMARY_START not in page and SUMMARY_END not in page:
+        raise ValueError("No summary block is defined for this page.")
+    if page.count(SUMMARY_START) != 1 or page.count(SUMMARY_END) != 1:
+        raise ValueError("Summary requires exactly one start marker and one end marker.")
+    start = page.index(SUMMARY_START) + len(SUMMARY_START)
+    end = page.index(SUMMARY_END)
+    if end < start:
+        raise ValueError("Summary end marker must follow the start marker.")
+    summary = page[start:end].strip()
+    if not summary:
+        raise ValueError("Summary block is empty.")
+    return summary
 
 
 def validate(catalog):
@@ -64,7 +81,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("list", "search", "show", "validate"))
     parser.add_argument("query", nargs="?", default="")
+    parser.add_argument("--summary", action="store_true", help="show only the page's marked summary block")
     args = parser.parse_args()
+    if args.summary and args.command != "show":
+        parser.error("--summary is only valid with show.")
+    if args.summary and not args.query:
+        parser.error("show --summary requires an entry ID.")
     catalog = json.loads((ROOT / "data/catalog.json").read_text())
     if args.command == "validate":
         errors = validate(catalog)
@@ -78,10 +100,18 @@ def main():
             match = args.query.casefold() in json.dumps(row, ensure_ascii=False).casefold()
         if match:
             matches.append(row)
+            content = None
+            if args.command == "show":
+                content = (ROOT / row["path"]).read_text()
+                if args.summary:
+                    try:
+                        content = extract_summary(content)
+                    except ValueError as error:
+                        parser.error(f"{row['id']}: {error}")
             print(f"{row['id']} | {row['title']} | {row['confidence']} / {row['evidence_scope']}")
             print(f"  {row['path']}\n  {row['limitations']}")
             if args.command == "show":
-                print((ROOT / row["path"]).read_text())
+                print(content)
     return not bool(matches)
 
 

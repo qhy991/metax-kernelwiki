@@ -197,8 +197,24 @@ Overall: 255 logical cases, 498 matrices and 4,980 batches; WMMA 163/255 exact w
 
 Frozen source passed 181 CPU tests. A separate host-only compilation of its metadata emitter matched all 15 protocol fields and 45 pattern records, including required plural lists. Nine native modes compiled in individual retained stages; 38 input/format negatives and three mode negatives passed before GPU admission. No compilation or device stage was retried.
 
+## 2026-10-09: Product-preserving factor-sign transfers
+
+Source `747c7b5` adds 24 distinct sign-transfer inputs at q6/q7/q12: two positive-component placements, two negative-component placements and four paired placements per q. A transfer negates both A and B at the selected term, keeping the signed product and reference fixed. Inactive flags must stay zero and both inactive operands remain positive zero. Both kernel/launch bodies, encoders and older contracts remain unchanged. The run ID `20261008-wmma-sign-transfer` uses the UTC date.
+
+Both full opposite-order sweeps find all components and scalar matrices exact. q6 pairs are exact; q7/q12 pairs have only C00 unequal in all four placements, always `0xbb800001` versus `0xbb800000`, with signed residual -2^-31 and adjacent-FP32 distance 1. Full output buffers remain equal within each fixed q/role across placements, across orders and against the corresponding traces; changed operand sign words are retained. This does not establish arbitrary factorization invariance or locate the arithmetic cause. Each pair is compared with its matching positive and negative component observations, without counting reused component values as new measurements.
+
+Only the four q7 paired placements were profiled. [Full sign-transfer evidence](../wiki/wmma-exactness.md#successor-transferring-factor-signs-at-fixed-products) · [All actual words and batches](../data/results/20261008-wmma-sign-transfer.json). Primary coverage is 52 logical observations and 104 matrices: WMMA 32/52 exact with 20 mismatches, scalar 52/52 exact. Nine auxiliary suites add 207 logical cases and 402 matrices. All 402 auxiliary and 38 input-matched primary historical comparisons agree, covering 440 current variant outputs.
+
+Overall: 259 logical cases, 506 matrices and 5,060 batches; WMMA 160/259 exact with 859 unequal elements, scalar 247/247 exact. All snapshots agree, values are finite and guards intact. Exact acceptance remains failed and performance unaccepted. All 15 device workers and four profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
+Frozen probe source passed 190 CPU tests. Host-only compilation of the exact metadata emitter matched 12 protocol fields and all 24 records. Ten native modes compiled in separate retained CPU stages; 42 input/format negatives and three incompatible-mode negatives passed before device admission. No compile or device stage was retried.
+
+## 2026-10-09: Concise retrieval from the canonical English page
+
+The WMMA page now begins with a Current findings table linking to each detailed control. `python3 scripts/wiki.py show c550-wmma-exactness --summary` reads that marked block directly from the page; the catalog remains the sole retrieval index. Default `show` still returns the complete page. Missing, malformed or empty summary blocks fail explicitly rather than falling back to the long text. Existing historical sections, failed outcomes and anchors remain present. The new retrieval behavior has seven temporary-fixture CLI tests and is separate from frozen device source `747c7b5`.
+
 ## Next questions
 
-- Transfer each nonzero term's sign between A and B while preserving its signed product, with matched standalone controls and a new input contract. This proposed comparison has not been executed; reciprocal exponent redistribution preserves sign placement and cannot establish that response.
+- Build a small single-case native reproducer for the established q7 witness, preserving the kernel, exact inputs and numerical contract, then validate it under a new frozen diagnostic. It is not yet implemented or tested. This would make subsequent independent reproduction, codegen investigation and qualified SDK comparisons easier to perform.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

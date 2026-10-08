@@ -6,6 +6,9 @@ description: Retrieve evidence-scoped MetaX C550 kernel facts, MACA toolchain gu
 # MetaX C550 KernelWiki
 
 From the repository root run `python3 scripts/wiki.py search <topic>`, then `show <id>`.
+For a page that defines a marked summary, use `python3 scripts/wiki.py show <id> --summary`
+for its concise view. Omit `--summary` to read the full page, including pages without a summary.
+Missing or malformed summary blocks return an error; summaries come from the canonical page.
 Read each result's confidence, evidence scope and limitations before applying it.
 Follow primary source links for documented APIs and result records for local observations.
 

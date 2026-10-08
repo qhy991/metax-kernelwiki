@@ -21,7 +21,7 @@ The published device experiments use one **C550 with MACA 3.5.3.18**. Each page 
 | Transpose | Tiling, shared-memory row pitch, and dynamic shared-memory requests have controlled comparisons. The request-size response depends on shape. | [Tiling and shared memory](wiki/transpose.md) |
 | Wave collectives | Full typed masks select 64- or 32-element reduction groups in the tested SDK. Physical wave width remains 64. | [Shuffle, reduction, and mask types](wiki/wave-collectives.md) |
 | Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
-| WMMA exactness | At fixed products and reference, five reciprocal A/B exponent pairs give unchanged complete outputs: q6 pairs are exact; q7/q12 pairs retain a residual of -2^-31. Components, scalar controls and input snapshots pass; WMMA performance remains unaccepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
+| WMMA exactness | At q6/q7/q12, tested exponent redistribution and factor-sign transfers preserve complete outputs at fixed products: q6 pairs are exact; q7/q12 retain -2^-31. Components and scalar controls pass; WMMA performance remains unaccepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
 | Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
 
 These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.
@@ -34,8 +34,11 @@ Retrieval uses only the Python standard library and requires no GPU or network:
 python3 scripts/wiki.py list
 python3 scripts/wiki.py search wave
 python3 scripts/wiki.py show c550-wmma-exactness
+python3 scripts/wiki.py show c550-wmma-exactness --summary
 python3 scripts/wiki.py validate
 ```
+
+The WMMA page provides a concise `--summary` view drawn from its own Current findings section. Full `show` remains available for every page.
 
 [`data/catalog.json`](data/catalog.json) is the single retrieval index. Each entry names its confidence, evidence scope, sources, and limitations. The command-line tool reads the same pages linked above.
 

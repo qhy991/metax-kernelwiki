@@ -2,7 +2,21 @@
 
 [Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. Prepared inputs are valid, guards are intact and all outputs are finite. Scalar controls are exact. The [fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) tests products `(q, -(q+1))/256` for every integer q from 1 through 14. Their exact sum is always -1/256: pairs at q1–6 are exact, while q7–14 each have one C00 residual of -2^-31. This is a bounded input-grid observation, not a universal threshold or an identified arithmetic mechanism. The [A-scaling study](#successor-exact-power-of-two-scaling-of-a) finds a constant normalized residual at q7/q12. The latest [reciprocal-exponent control](#successor-reciprocal-exponents-with-fixed-products) holds each product and reference fixed: complete outputs remain unchanged across its five exponent pairs, with q6 exact and q7/q12 retaining a signed residual of -2^-31.
+<!-- kernelwiki:summary:start -->
+## Current findings
+
+**Scope:** one C550, MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Native FP16 WMMA with a float accumulator fails the tested exact-dyadic contract. Scalar controls are exact in the recorded comparisons. **No WMMA performance result is accepted.** Here q labels the base product pair `(q, -(q+1))/256`. The two-product example `(12,-13)/256` returns `0xbb800001` instead of exact `0xbb800000`.
+
+| Question | Bounded finding | Evidence |
+| --- | --- | --- |
+| Are prepared inputs and captured device inputs consistent? | Full readbacks agree before, between and after the paired implementations. They cover capture boundaries, not transient values inside a kernel. | [Input controls](#successor-device-input-snapshots-and-a-scalar-fp32-source-control) |
+| Does the residual need a dense surrounding tile or the original output coordinate? | The two-product witness persists after isolation and at both tested coordinates. Components are exact separately; both tested K-slot orders retain the paired residual. | [Isolation](#successor-isolation-and-relocation-of-the-two-products) · [Components](#successor-single-products-and-k-slot-permutations) |
+| Do signs and product magnitudes matter? | At product magnitudes 12/256 and 13/256, same-sign pairs are exact; two mixed-sign cases have negative residuals. In the fixed-result integer q1–14 grid, pairs at q1–6 are exact and q7–14 fail at C00. | [Product signs](#successor-fixed-magnitude-sign-configurations) · [Magnitude grid](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
+| What happens under exact powers of two? | At q6/q7/q12, A-only scaling preserves the normalized failing residual. Reciprocal A/B scaling holds products fixed and preserves complete outputs across the five tested exponent pairs. | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal scaling](#successor-reciprocal-exponents-with-fixed-products) |
+| Does moving signs between factors change the result? | At q6/q7/q12, transferring either or both term signs between A and B preserves complete outputs within each q/role. q6 pairs are exact; q7/q12 retain -2^-31. | [Factor-sign transfer](#successor-transferring-factor-signs-at-fixed-products) |
+
+The cause remains unresolved: these observations do not identify native instruction precision, rounding or a unique compiler/hardware defect. A float output type alone does not establish stepwise IEEE FP32 arithmetic. Validate each workload against its own numerical contract; these bounded diagnostics do not qualify arbitrary-input or framework GEMM.
+<!-- kernelwiki:summary:end -->
 
 ## Reading guide
 
@@ -14,6 +28,7 @@ In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16�
 | Can the residual be reproduced with two products? | [K-prefix scan](#successor-logical-k-prefixes-and-a-two-term-witness) · [Isolation and relocation](#successor-isolation-and-relocation-of-the-two-products) |
 | What changes with placement, signs or magnitudes? | [Components and K slots](#successor-single-products-and-k-slot-permutations) · [Sign configurations](#successor-fixed-magnitude-sign-configurations) · [Fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
 | Does exact scaling change the numerical response? | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal exponents at fixed products](#successor-reciprocal-exponents-with-fixed-products) |
+| Does factor-sign placement change it? | [Sign transfer at fixed products](#successor-transferring-factor-signs-at-fixed-products) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
@@ -371,7 +386,44 @@ Overall coverage is 255 logical cases, 498 matrices, 127,488 payload words, 63,7
 
 Frozen source passed 181 CPU tests. A separate host-only compilation of the frozen metadata emitter matched all 15 protocol fields and all 45 pattern records, including plural historical lists. Nine native modes compiled through separate retained CPU stages; 38 input/format negatives and three incompatible-mode negatives passed with devices hidden. All **13 device workers and three profiled applications** exited and passed release checks. No result was promoted to open-cake-ir.
 
-A proposed next contrast can transfer each nonzero term's sign between A and B while preserving its signed product, with matching component controls. The current reciprocal study preserves sign placement, so it cannot establish that response. Such a contrast needs a separate input contract and has not been executed. Native codegen investigation and independently qualified SDK comparisons remain open.
+The successor below tests product-preserving sign transfer under a separate input contract. The reciprocal study preserves sign placement and does not itself establish those outcomes. Native codegen investigation and independently qualified SDK comparisons remain open.
+
+## Successor: transferring factor signs at fixed products
+
+Source `747c7b5` adds a separate `sign-transfer-control` contract at q in {6,7,12}, with M=N=16, K=2 and target C[0,0]. The base pair is A=[-q,1]/16 and B=[-1,-(q+1)]/16. A transfer at K0 or K1 negates **both operands of that term**, preserving its signed product. Both device kernels, launch helpers and encoders remain unchanged. The [probe guide](../experiments/wmma/README.md#explicit-product-preserving-sign-transfers) binds the two integer flags, actual operands and exact reference.
+
+For each q, the positive component has two K0 sign placements, the negative component has two K1 placements, and the pair has all four combinations. Inactive component flags must be zero and both inactive operands remain positive zero. This gives **24 conditions and 24 distinct complete input pairs**, without duplicate labels for inactive terms. All unrelated input words are positive zero; all reference outputs except C00 are zero.
+
+The plan fixed two complete 24-condition sweeps in opposite case/implementation orders and one preselected trace for each of the four q7 pair placements. All primary conditions use the same mode-7 binary. Source continuity does not assert binary identity with earlier studies.
+
+Every standalone component and every scalar matrix is exact. The paired WMMA C00 words agree in both sweeps:
+
+| flip K0, K1 | A numerators | B numerators | q6 WMMA | q7 and q12 WMMA |
+| --- | --- | --- | --- | --- |
+| 0, 0 | `[-q, 1]` | `[-1, -(q+1)]` | `0xbb800000` | `0xbb800001` |
+| 1, 0 | `[q, 1]` | `[1, -(q+1)]` | `0xbb800000` | `0xbb800001` |
+| 0, 1 | `[-q, -1]` | `[-1, q+1]` | `0xbb800000` | `0xbb800001` |
+| 1, 1 | `[q, -1]` | `[1, q+1]` | `0xbb800000` | `0xbb800001` |
+
+Operands use denominator 16. Every paired reference remains **-1/256**, or `0xbb800000`. q6 is exact in all four placements. Each q7/q12 paired matrix has only C00 unequal: -0.003906250465661287 instead of -0.00390625, with signed residual **-2^-31**, absolute error **2^-31**, and **one adjacent FP32 step below the reference**. No sign or scale normalization is applied.
+
+For each fixed q, role, implementation and sweep order, complete output buffers are identical across all admitted sign placements, including guards. The retained input words show the actual sign changes. Corresponding outputs also agree across execution orders and between every trace and both sweeps. Every other primary output is numerically zero; all values are finite, guards intact, and all **319,488 primary snapshot halfwords** match the prepared and declared inputs.
+
+Each pair `(f0,f1)` is compared with the observed positive component `(f0,0)` and negative component `(0,f1)`. Their exact CPU sum equals the paired reference. Subtracting that sum from the observed paired WMMA value gives the signed residual above. Reusing a component observation in several such comparisons does not create additional device measurements, and the derived sum is not a GPU addition test.
+
+The earlier product-sign study changed signed products and reference sums. This study changes which operand carries each sign while holding both signed products fixed, and observes no output change for these placements. It does not establish arbitrary factorization invariance, an internal rounding rule, universal behavior across signs or a unique hardware/compiler cause. Together with reciprocal exponent controls, it bounds two tested representation changes; it does not locate the unresolved arithmetic mechanism.
+
+Only the four q7 paired placements have primary profiler evidence; no component, q6 or q12 condition was profiled. Each trace contains 220 actual kernel events, split into 110-event WMMA/scalar groups with ten warmups each. Descriptors remain WMMA block64/28 registers and scalar block256/36 registers, zero shared/private memory, and 110 false recompilation flags per group. Raw trace units remain unverified, and timings are not accepted as performance results.
+
+The [complete sign-transfer record](../data/results/20261008-wmma-sign-transfer.json) retains every actual input, snapshot and output word. Primary coverage is **52 paired logical observations, 104 matrices and 1,040 batches**, including 26,624 payload words, 13,312 guards and 106,496 prepared halfwords. WMMA is exact in 32/52 matrices, with 20 unequal elements in the remaining 20 matrices. Scalar is exact in 52/52. Nine auxiliary suites add 207 logical cases and 402 matrices, all matching earlier complete buffers.
+
+Nine untransferred primary conditions match prior reciprocal inputs by complete word equality. Across the two sweeps and the matching q7 trace, their 38 current variant outputs each have one historical match. With 402 auxiliary comparisons, all **440 comparisons covering 440 current variant outputs** agree. Other sign-transfer inputs are distinct and are not labeled historical repetitions merely because their products match.
+
+Overall coverage is 259 logical cases, 506 matrices, 129,536 payload words, 64,768 guards, 530,432 prepared halfwords, 1,517,568 snapshot halfwords and 5,060 batches. Scalar is exact in 247/247 matrices. WMMA has 160/259 exact matrices and 859 unequal elements in the remainder. The aggregate remains `correctness.passed=false` and `performance_accepted=false`.
+
+Frozen probe source passed 190 CPU tests. A separate host-only compilation of its metadata emitter matched 12 protocol fields and all 24 pattern records. Ten native modes compiled in individual retained CPU stages; 42 input/format negatives and three incompatible-mode negatives passed with devices hidden. All **15 device workers and four profiled applications** exited and passed release checks. No result was promoted to open-cake-ir.
+
+A useful next step is a small single-case reproducer for the established q7 witness, preserving the kernel, exact inputs and numerical contract, then validating it as a separate frozen diagnostic. That would make the evidence easier to reproduce and provide a bounded basis for later codegen or qualified SDK comparisons. It has not been implemented or tested here; the current controls do not establish that the larger harness can be removed without affecting the outcome.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

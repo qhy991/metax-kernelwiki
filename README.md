@@ -10,6 +10,7 @@
 | --- | --- |
 | 看现阶段做了什么、下一步测什么 | [研究进展](docs/research-log.md) |
 | 区分产品、原生 ISA 与兼容架构值 | [设备身份](wiki/device-identity.md) |
+| 查看同结果转置的优化与尾部验证 | [转置分块与 padding](wiki/transpose.md) |
 | 查看固定地址集合的访存复验 | [读取排列与时间](wiki/memory-order.md) |
 | 理解 512/1024 线程与首次启动 | [launch bounds 与运行时重编译](wiki/launch-bounds.md) |
 | 查编译器与 Triton 原始依据 | [工具链](docs/toolchain.md) · [资料索引](docs/sources.md) |

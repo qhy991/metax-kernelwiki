@@ -51,9 +51,19 @@
 
 本轮没有向 open-cake-ir 提升；`9411468` 的公有仓库 CI 已通过，新探针固定提交在独立 checkout 上通过52项CPU检查。
 
+## 2026-10-08：同结果转置的共享内存分块
+
+源码 `bf1db0f` 增加同一 row-major FP32 transpose 的 direct、tile64、tile64_pad1 三种实现。19个shape共57case全部通过，包含1维细长、31×33/33×31、63/64/65边界以及两个大ragged矩阵。有效store与其对应shared loader的guard一致，整个block无条件经过barrier。
+
+三个大尺寸的六进程54case确认也全部通过。未padding的tile64相对本次direct的进程内中位加速比分别为9.183、7.523、2.833；padding则没有统一方向：262144×64近似中性、65536×256略慢、4096×4096略快。不同操作数、block数、每线程工作与shared/barrier共同改变，因此收益不能只归因于一个机制。
+
+[机制页](../wiki/transpose.md) · [1140个原始事件批次与三份独立trace](../data/results/20261008-transpose.json)。三份trace各110个kernel，报告direct/tiled寄存器为14/13，shared为0/16384/16640字节；未采bank-conflict或DRAM计数器。官方C500资料只作为先验，没有转换为C550 bank常量。
+
+全部十个设备进程及被profile的应用均已退出，未保留本任务分配。此轮仍为独立native实验，没有向open-cake-ir的Compiler/Target/校准提升。固定源码在独立checkout通过63项CPU检查；`1166d12`的公有仓库CI已通过。
+
 ## 下一轮问题
 
-- 保持同一个转置结果，比较直接访问与二维分块/共享内存实现，检验局部复用与读写组织能否带来有正确性证据的收益。
-- 为新的二维实现覆盖边界和尾部；本次幂二整倍数探针不提供这部分证据。
-- 新 SDK、其他 kernel 或形状各自验证资源和运行时路径；不沿用旧的最优参数。
-- mcTracer 导出时间单位继续保持未验证；没有指标或反例之前，不推断 cache line、bank 数、TLB容量或指令峰值。
+- 将两个shared行距的已分配容量固定，并使用同一个runtime-param kernel，进一步区分padding效应与资源/代码生成变化；仍不凭时间反推bank数。
+- 对ragged形状的性能做独立确认，再考虑有证据的参数选择；不把初扫最小值当普遍规则。
+- 继续推进64-lane reduction等机制，并保留非整齐输入的完整正确性证据。
+- 新SDK、其他kernel和shape分别验证；mcTracer导出时间单位仍未确认，不能当作已校准kernel微秒。

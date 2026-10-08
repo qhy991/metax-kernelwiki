@@ -39,6 +39,12 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 | [vLLM-metax 事件计时包装][kernel-timer] | 固定在 `f2fcc59c314f1fbc7897f46d465e5f7c35900e8a`；直接使用 `mc_runtime.h` 与 `mcEventElapsedTime` 的实际代码例子 |
 | [mcTVM][mctvm] | 官方另一条编译路线的入口；README 的 `metax/mxc-c500` 标签明确针对 C500 |
 
+## Shared memory 与同步的来源边界
+
+[Runtime 3.5.3.x 编程模型的 WSM 说明][wsm-scope]将共享存储归属于线程块；[集体操作说明][block-sync]要求参与线程匹配同步调用，并给出 block sync 与 `__syncthreads` 的关系。本库的 tiled transpose 因此对边界 load/store 分别屏蔽，但让整个 block 到达同一 barrier。
+
+[官方优化指南第3章的固定提交][c500-banks]明确描述的是 **C500**：32个bank、连续4-byte单元的分配，以及64线程warp的32-bit访问分成两个32线程阶段。该段未声明SDK版本，本轮未找到C550专属的同等bank契约。它只能提供待C550检验的预测，不能转写为C550硬件常量。即使增加一列padding有收益，这个二选一结果也不能识别bank数或冲突阶数。
+
 ## 第一批可证伪问题
 
 以下是实验问题，均不是既成硬件结论。
@@ -70,3 +76,7 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 [triton-codegen]: https://github.com/MetaX-MACA/mcTriton/blob/7dd407c26568fceaca44cb894138e5202d369805/third_party/metax/triton_metax.cc
 [kernel-timer]: https://github.com/MetaX-MACA/vLLM-metax/blob/f2fcc59c314f1fbc7897f46d465e5f7c35900e8a/csrc/libtorch_stable/quantization/awq/hgemv_selector.hpp
 [mctvm]: https://github.com/MetaX-MACA/mcTVM
+
+[wsm-scope]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程模型.html#3s9wt8x546le1
+[block-sync]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程接口.html#f9dqemikxd6i1
+[c500-banks]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md

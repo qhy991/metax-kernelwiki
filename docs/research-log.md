@@ -61,9 +61,17 @@
 
 全部十个设备进程及被profile的应用均已退出，未保留本任务分配。此轮仍为独立native实验，没有向open-cake-ir的Compiler/Target/校准提升。固定源码在独立checkout通过63项CPU检查；`1166d12`的公有仓库CI已通过。
 
+## 2026-10-08：固定容量与共同函数的shared行距对照
+
+源码 `56db27e` 在同一非模板kernel中固定4160个shared元素，运行时选择行距64/65。38-case完整检查通过；后续十进程覆盖五个大shape，每个shape在每个位置出现两次、两种pitch先后各一次，100个确认case全部通过。五个shape的全部进程均观察到pitch65更快，进程内中位比值范围约1.079×–1.189×。
+
+两份trace各110个kernel，函数名相同，都报告13个寄存器、16640字节static shared；缺省57-case及旧记录协议保留。这个对照减少了第一轮容量与模板实例不同的混杂，但shared活跃地址仍会变化，不能识别bank映射，也不能把新旧实现差异唯一归因于容量或occupancy。
+
+[同一机制页的后继章节](../wiki/transpose.md#后继同一个函数固定16640字节容量) · [独立结果与1400个计时批次](../data/results/20261008-shared-pitch.json)。所有十三个设备进程及profiled应用已退出；仍不向open-cake-ir提升。源代码固定提交在独立checkout通过66项CPU测试，`820fc44`公有仓库CI已通过。
+
 ## 下一轮问题
 
-- 将两个shared行距的已分配容量固定，并使用同一个runtime-param kernel，进一步区分padding效应与资源/代码生成变化；仍不凭时间反推bank数。
-- 对ragged形状的性能做独立确认，再考虑有证据的参数选择；不把初扫最小值当普遍规则。
-- 继续推进64-lane reduction等机制，并保留非整齐输入的完整正确性证据。
-- 新SDK、其他kernel和shape分别验证；mcTracer导出时间单位仍未确认，不能当作已校准kernel微秒。
+- 用同一个dynamic-shared kernel和同一pitch，只改变launch预留字节数；请求容量、静态资源、动态上限和trace报告分别记录，不把上限当请求或实际驻留。
+- 不将当前五shape的优势扩展为所有dtype、shape或SDK的无条件padding规则。
+- 继续推进64-lane reduction等机制；保持尾部与完整输出验证。
+- 没有可识别的计数器/反例之前，不反推bank数、宽度、冲突阶数或实际occupancy。

@@ -41,6 +41,12 @@ export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 本轮公开文档检索尚未找到适用于当前 MXCC 的 `__launch_bounds__` 完整语义定义，尤其是第二参数的处理方式和超过显式第一参数时的行为。保留本机头文件、编译诊断和受控运行证据后再作结论，不直接套用 CUDA 或 HIP 的定义。
 
+## 动态 shared 容量的后继控制入口
+
+官方 [Runtime API 参考3.5.3.x 的 `mcLaunchKernel`][dynamic-launch] 将 `sharedMemBytes` 定义为此次kernel启动请求的动态共享内存字节数，并说明它支持外部共享声明；[编程指南][extern-shared]给出了 `extern __shared__` 的语法入口。可以据此设计同一kernel、同一行距下仅改变动态预留容量的对照，但仍需本机编译、实际资源和正确性验证。
+
+[属性参考][dynamic-attributes]区分静态shared用量与动态shared的最大允许值：静态值不包含此次launch的动态请求，最大允许值也不是实际请求量。[设置上限的接口][dynamic-limit]要求动态上限与静态shared之和不超过设备声明的每block上限。这里不引入CUDA的默认48KiB，也不把分配容量或occupancy API的预测当成实测驻留。
+
 ## mcTriton 源码事实
 
 [Python driver][triton-driver] 在 target 中保留 backend 名 `maca`，并使用 64-lane 组；launcher 将 `num_warps` 乘以 64 作为 block 的线程数。[C driver][triton-driver-c]另有兼容 capability 映射：设备 `major=10/15/16` 分别映射为 `80/86/89`。这些是该源码版本的接口实现，不能当作 NVIDIA compute capability 或 C550 原生 ISA 型号。
@@ -88,3 +94,8 @@ MACA 提供事件计时 API，官方例子将开始/结束事件放在 kernel �
 [tracer]: https://developer.metax-tech.com/api/client/document/preview/性能测试及分析工具/mcTracer使用手册/曦云C500系列/3.5.3.x/split_files/mctracer.html
 [tracer-viewer]: https://developer.metax-tech.com/api/client/document/preview/性能测试及分析工具/mcTracer使用手册/曦云C500系列/3.5.3.x/split_files/mctracer_viewer.html
 [mxvs]: https://developer.metax-tech.com/api/client/document/preview/996/index.html
+
+[dynamic-launch]: https://developer.metax-tech.com/api/client/document/preview/990/split_files/mxmaca_运行时api模块.html#mcerror-t-mclaunchkernel-const-void-function-address-dim3-numblocks-dim3-dimblocks-void-args-size-t-sharedmembytes-dparm0-mcstream-t-stream-dparm0
+[extern-shared]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程接口.html#sxjmjcedu7c41
+[dynamic-attributes]: https://developer.metax-tech.com/api/client/document/preview/990/split_files/mxmaca_运行时api模块.html#mcerror-t-mcfuncgetattribute-int-value-mcfunction-attribute-attrib-mcfunction-t-hfunc
+[dynamic-limit]: https://developer.metax-tech.com/api/client/document/preview/990/split_files/mxmaca_运行时api模块.html#mcerror-t-mcfuncsetattribute-const-void-func-mcfuncattribute-attr-int-value

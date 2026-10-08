@@ -151,7 +151,7 @@
     },
     {
       "id": "c550-transpose-tiling-padding",
-      "title": "C550 同结果转置：共享内存分块、padding 与尾部验证",
+      "title": "C550转置：分块、padding与固定shared容量的行距对照",
       "tags": [
         "transpose",
         "shared memory",
@@ -162,17 +162,22 @@
         "分块",
         "共享内存",
         "尾部",
-        "C550"
+        "C550",
+        "runtime pitch",
+        "capacity",
+        "行距",
+        "容量"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "local-measurement",
       "path": "wiki/transpose.md",
       "sources": [
         "https://github.com/qhy991/metax-kernelwiki/tree/bf1db0f01da160789efb115b68502ba4b05611cc",
-        "https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md"
+        "https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md",
+        "https://github.com/qhy991/metax-kernelwiki/tree/56db27ef74bf2207679d987c83d9d110fb13061b"
       ],
-      "result": "data/results/20261008-transpose.json",
-      "limitations": "同一shape的三实现输出相同；比值包含完整实现差异，不能唯一归因coalescing或bank冲突。C500 bank资料不是C550规范，ragged性能只有初扫。"
+      "result": "data/results/20261008-shared-pitch.json",
+      "limitations": "专用kernel与同函数固定容量对照各自保留；行距效应不证明bank几何或occupancy，新旧差异不能全部归因容量。"
     }
   ]
 }

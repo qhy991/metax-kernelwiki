@@ -48,10 +48,21 @@ struct Case {
     unsigned warmups = 0, samples = 0, launches = 0;
 };
 
+struct DynamicShared {
+    unsigned pitch = 0, bytes = 0;
+};
+
+DynamicShared dynamic_shared(const Case& c) {
+    if (c.variant == "dynamic_pitch64_bytes16384") return {64, 16384};
+    if (c.variant == "dynamic_pitch64_bytes16640") return {64, 16640};
+    if (c.variant == "dynamic_pitch65_bytes16640") return {65, 16640};
+    return {};
+}
+
 unsigned runtime_pitch(const Case& c) {
     if (c.variant == "runtime_pitch64") return 64;
     if (c.variant == "runtime_pitch65") return 65;
-    return 0;
+    return dynamic_shared(c).pitch;
 }
 
 bool admitted_shape(uint64_t rows, uint64_t cols) {
@@ -96,6 +107,11 @@ std::vector<Case> read_plan(const std::string& directory) {
         c.n = c.rows * c.cols;
         if (c.variant != "direct" && c.variant != "tile64" && c.variant != "tile64_pad1" && runtime_pitch(c) == 0)
             throw std::runtime_error("Unknown transpose variant");
+        const auto dynamic = dynamic_shared(c);
+        if ((dynamic.pitch || dynamic.bytes) && ((dynamic.pitch != 64 && dynamic.pitch != 65)
+                                                || dynamic.bytes % sizeof(float)
+                                                || dynamic.bytes < 64 * dynamic.pitch * sizeof(float)))
+            throw std::runtime_error("Insufficient or invalid dynamic shared capacity for 64 pitched rows");
         if (c.warmups != 10 || c.samples != 10 || c.launches != 10)
             throw std::runtime_error("Probe fixes 10 warmups and 10 samples of 10 launches");
         cases.push_back(c);
@@ -151,10 +167,30 @@ __global__ void transpose_runtime_pitch_kernel(const float* __restrict__ input, 
     }
 }
 
+// The three dynamic controls differ only in runtime pitch and requested launch bytes.
+__global__ void transpose_dynamic_shared_kernel(const float* __restrict__ input, float* __restrict__ output,
+                                                uint64_t rows, uint64_t cols, unsigned pitch) {
+    extern __shared__ float storage[];
+    const uint64_t input_col = static_cast<uint64_t>(blockIdx.x) * 64 + threadIdx.x;
+    const uint64_t input_row = static_cast<uint64_t>(blockIdx.y) * 64 + threadIdx.y;
+    for (unsigned offset = 0; offset < 64; offset += 4) {
+        if (input_col < cols && input_row + offset < rows)
+            storage[(threadIdx.y + offset) * pitch + threadIdx.x] = input[(input_row + offset) * cols + input_col];
+    }
+    __syncthreads();
+    const uint64_t output_col = static_cast<uint64_t>(blockIdx.y) * 64 + threadIdx.x;
+    const uint64_t output_row = static_cast<uint64_t>(blockIdx.x) * 64 + threadIdx.y;
+    for (unsigned offset = 0; offset < 64; offset += 4) {
+        if (output_col < rows && output_row + offset < cols)
+            output[(output_row + offset) * rows + output_col] = storage[threadIdx.x * pitch + threadIdx.y + offset];
+    }
+}
+
 mcFuncAttributes function_attributes(const Case& c) {
     const void* function = c.variant == "direct" ? reinterpret_cast<const void*>(transpose_direct_kernel)
                          : c.variant == "tile64" ? reinterpret_cast<const void*>(transpose_tile_kernel<64>)
                          : c.variant == "tile64_pad1" ? reinterpret_cast<const void*>(transpose_tile_kernel<65>)
+                         : dynamic_shared(c).bytes ? reinterpret_cast<const void*>(transpose_dynamic_shared_kernel)
                          : reinterpret_cast<const void*>(transpose_runtime_pitch_kernel);
     mcFuncAttributes attributes{};
     MC_CHECK(mcFuncGetAttributes(&attributes, function));
@@ -163,12 +199,15 @@ mcFuncAttributes function_attributes(const Case& c) {
 
 void launch(const Case& c, const float* input, float* output) {
     const dim3 grid = grid_shape(c), block = block_shape(c);
+    const auto dynamic = dynamic_shared(c);
     if (c.variant == "direct")
         transpose_direct_kernel<<<grid, block>>>(input, output, c.rows, c.cols);
     else if (c.variant == "tile64")
         transpose_tile_kernel<64><<<grid, block>>>(input, output, c.rows, c.cols);
     else if (c.variant == "tile64_pad1")
         transpose_tile_kernel<65><<<grid, block>>>(input, output, c.rows, c.cols);
+    else if (dynamic.bytes)
+        transpose_dynamic_shared_kernel<<<grid, block, dynamic.bytes>>>(input, output, c.rows, c.cols, dynamic.pitch);
     else
         transpose_runtime_pitch_kernel<<<grid, block>>>(input, output, c.rows, c.cols, runtime_pitch(c));
     MC_CHECK(mcGetLastError());
@@ -251,9 +290,10 @@ void run(const std::string& input_directory, const std::string& output_directory
         const auto attributes = function_attributes(c);
         const dim3 grid = grid_shape(c), block = block_shape(c);
         const unsigned tile_size = c.variant == "direct" ? 0 : 64;
+        const auto dynamic = dynamic_shared(c);
         const unsigned pitch = runtime_pitch(c);
         const unsigned padding = c.variant == "tile64_pad1" || pitch == 65 ? 1 : 0;
-        const unsigned allocated_shared_elements = pitch ? 64 * 65 : tile_size * (tile_size + padding);
+        const unsigned allocated_shared_elements = dynamic.bytes ? 0 : pitch ? 64 * 65 : tile_size * (tile_size + padding);
         records << "{\"type\":\"case\",\"id\":" << json_string(c.id)
                 << ",\"rows\":" << c.rows << ",\"cols\":" << c.cols << ",\"n\":" << c.n
                 << ",\"variant\":" << json_string(c.variant)
@@ -261,13 +301,19 @@ void run(const std::string& input_directory, const std::string& output_directory
                 << ",\"grid_x\":" << grid.x << ",\"grid_y\":" << grid.y << ",\"grid_z\":" << grid.z
                 << ",\"tile_rows\":" << tile_size << ",\"tile_cols\":" << tile_size << ",\"padding\":" << padding
                 << ",\"intended_static_shared_bytes\":" << allocated_shared_elements * sizeof(float);
-        if (pitch)
+        if (dynamic.bytes)
+            records << ",\"shared_pitch_elements\":" << dynamic.pitch
+                    << ",\"requested_dynamic_shared_bytes\":" << dynamic.bytes
+                    << ",\"requested_shared_elements\":" << dynamic.bytes / sizeof(float);
+        else if (pitch)
             records << ",\"shared_pitch_elements\":" << pitch
                     << ",\"allocated_shared_elements\":" << allocated_shared_elements;
         records << ",\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
                 << ",\"numRegs\":" << attributes.numRegs << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
-                << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}"
-                << ",\"warmups\":" << c.warmups << ",\"samples\":" << c.samples
+                << ",\"localSizeBytes\":" << attributes.localSizeBytes;
+        if (dynamic.bytes)
+            records << ",\"maxDynamicSharedSizeBytes\":" << attributes.maxDynamicSharedSizeBytes;
+        records << "},\"warmups\":" << c.warmups << ",\"samples\":" << c.samples
                 << ",\"launches_per_sample\":" << c.launches
                 << ",\"total_launches\":" << c.warmups + c.samples * c.launches
                 << ",\"logical_bytes_per_launch\":" << c.n * 8

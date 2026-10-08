@@ -77,6 +77,52 @@ differ from the intended size or between the two pitches; later compilation,
 device and trace observations must establish those properties. Neither a pitch
 change nor a timing difference alone proves bank conflicts or their removal.
 
+## Dynamic-shared control suite
+
+`prepare DIRECTORY --suite dynamic-shared` writes 57 cases: each of the same
+19 shapes with the following three explicitly mapped variants. All use one
+non-template `transpose_dynamic_shared_kernel` with `extern __shared__ float
+storage[]`, the same guarded indexing and unconditional barrier, and the same
+64×4 block and grid. The runtime pitch and third kernel-launch argument are the
+only controls changed within this suite.
+
+| Variant | Runtime pitch, elements | Requested dynamic shared bytes |
+|---|---:|---:|
+| `dynamic_pitch64_bytes16384` | 64 | 16,384 |
+| `dynamic_pitch64_bytes16640` | 64 | 16,640 |
+| `dynamic_pitch65_bytes16640` | 65 | 16,640 |
+
+The first pair holds the access pattern and pitch fixed while changing the
+launch's requested shared-memory reservation. The second and third variants
+hold requested capacity fixed while changing pitch. These comparisons preserve
+the same output semantics, input, oracle, buffers, guards, warmups and timing
+contract; the complete dynamic suite has 6,270 launches. The original default
+57-case and static shared-pitch 38-case preparations and records are unchanged.
+
+The host admits only these named pairs; there is no arbitrary pitch or byte
+argument in the TSV or CLI. It checks that a mapped request can contain 64 full
+rows at its pitch before the first device API. An insufficient pair, including
+pitch 65 with only 16,384 bytes, has no admitted route. This is an experiment
+capacity check, not a model of the hardware's reservation granularity or limits.
+
+Dynamic case records separate four quantities:
+
+- `shared_pitch_elements` is the runtime addressing pitch, 64 or 65.
+- `requested_dynamic_shared_bytes` is the third launch argument; its element
+  count is `requested_shared_elements`. Neither reports actual hardware allocation.
+- `intended_static_shared_bytes=0` describes this kernel's source declaration.
+- `function_attributes_before_timing.sharedSizeBytes`, `numRegs` and
+  `maxDynamicSharedSizeBytes` retain the raw function API observations alongside
+  the existing fields. `sharedSizeBytes` is the function's reported static shared
+  size; `maxDynamicSharedSizeBytes` is its reported dynamic shared limit, not
+  the bytes requested or allocated for a particular launch.
+
+No attribute is forced to equal a source intention or the launch request. The
+probe does not call `mcFuncSetAttribute` to change a limit. Device execution and
+trace evidence must establish the actual route and behavior. Equal requested
+bytes do not prove equal hardware allocation, occupancy or performance, and a
+timing difference does not by itself identify bank conflicts.
+
 ## Independent CPU oracle and memory
 
 Input `i` is `float32(i)` for `0 <= i < 16,777,216`, giving unique, finite,
@@ -175,6 +221,12 @@ class for in-range unique loads, initialized shared reads, unique stores and
 the independent transpose result. Protocol tests reject absent, mistyped or
 incorrect pitch/capacity metadata, while retaining actual API attributes as
 observations. These checks add no GPU or occupancy evidence.
+
+Dynamic-control tests check all three admitted pitch/capacity pairs against the
+same local edge classes, reject insufficient or unlisted pairs before device
+use, reject missing or tampered requested-capacity metadata, and require the
+new dynamic-limit API field only for dynamic cases. They continue to read old
+default and static shared-pitch records without backfilling new resource fields.
 
 Python reuses only existing native CPU input validation, binary reading, endian
 checks and input/guard constants. Transpose semantics and its experiment protocol

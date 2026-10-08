@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "transpose", Path(__file__).resolve().parents[1] / "experiments/transpose/experiment.py")
@@ -42,7 +43,7 @@ class TransposeTest(unittest.TestCase):
             source = words(range(rows * cols))
             matrix = [source[start:start + cols] for start in range(0, len(source), cols)]
             output = guarded(array.array("I", (value for column in zip(*matrix) for value in column)))
-            for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS):
+            for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS, *probe.DYNAMIC_SHARED_VARIANTS):
                 case = dict(id="matrix", rows=rows, cols=cols, variant=variant)
                 with self.subTest(rows=rows, cols=cols, variant=variant):
                     result = probe.validate_output(case, source, output)
@@ -216,6 +217,82 @@ class TransposeTest(unittest.TestCase):
                     self.assertEqual(loaded, consumed)
                     self.assertEqual(output, [row * width + col for col in range(width) for row in range(height)])
 
+    def test_dynamic_shared_suite_preserves_both_prior_suites_and_explicit_controls(self):
+        cases = probe.dynamic_shared_cases()
+        self.assertEqual(len(cases), 57)
+        self.assertEqual(len(probe.default_cases()), 57)
+        self.assertEqual(len(probe.shared_pitch_cases()), 38)
+        expected = [("dynamic_pitch64_bytes16384", 64, 16384),
+                    ("dynamic_pitch64_bytes16640", 64, 16640),
+                    ("dynamic_pitch65_bytes16640", 65, 16640)]
+        for index, shape in enumerate(probe.SHAPES):
+            for case, (variant, pitch, requested_bytes) in zip(cases[index * 3:(index + 1) * 3], expected):
+                self.assertEqual((case["rows"], case["cols"]), shape)
+                self.assertEqual(case["variant"], variant)
+                meta = probe.launch_metadata(case)
+                self.assertEqual(meta["shared_pitch_elements"], pitch)
+                self.assertEqual(meta["requested_dynamic_shared_bytes"], requested_bytes)
+                self.assertEqual(meta["requested_shared_elements"], requested_bytes // 4)
+                self.assertEqual(meta["intended_static_shared_bytes"], 0)
+                self.assertNotIn("allocated_shared_elements", meta)
+                self.assertEqual((meta["block_x"], meta["block_y"], meta["block_z"]), (64, 4, 1))
+                self.assertEqual(case["warmups"] + case["samples"] * case["launches"], 110)
+        for case in probe.default_cases() + probe.shared_pitch_cases():
+            self.assertNotIn("requested_dynamic_shared_bytes", probe.launch_metadata(case))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(probe.read_plan(self.write_plan(directory, cases)), cases)
+
+    def test_dynamic_capacity_rejects_insufficient_pairs_and_unknown_variants(self):
+        for pitch, requested_bytes in ((64, 16380), (65, 16384), (65, 16636), (64, 0),
+                                       (64, -4), (63, 16640), (66, 20000), (True, 16640), (64, 16384.0)):
+            with self.subTest(pitch=pitch, requested_bytes=requested_bytes), self.assertRaises(ValueError):
+                probe.validate_dynamic_capacity(pitch, requested_bytes)
+        base = probe.dynamic_shared_cases()[0]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "outside the fixed experiment plan"):
+                probe.read_plan(self.write_plan(directory, [dict(base, variant="dynamic_pitch65_bytes16384")]))
+            # The pre-device capacity gate also rejects an accidentally unsafe source mapping.
+            with patch.dict(probe.DYNAMIC_SHARED_VARIANTS, {base["variant"]: (65, 16384)}):
+                with self.assertRaisesRegex(ValueError, "Insufficient"):
+                    probe.read_plan(self.write_plan(directory, [base]))
+
+    def test_dynamic_requested_capacities_cover_every_initialized_tile_access(self):
+        edge_classes = set()
+        for rows, cols in probe.SHAPES:
+            heights = {min(64, rows)} | ({rows % 64} if rows % 64 else set())
+            widths = {min(64, cols)} | ({cols % 64} if cols % 64 else set())
+            edge_classes.update((height, width) for height in heights for width in widths)
+        for pitch, requested_bytes in probe.DYNAMIC_SHARED_VARIANTS.values():
+            for height, width in edge_classes:
+                storage = [None] * (requested_bytes // 4)
+                loaded = set()
+                for ty in range(4):
+                    for tx in range(64):
+                        for offset in range(0, 64, 4):
+                            if tx < width and ty + offset < height:
+                                slot = (ty + offset) * pitch + tx
+                                self.assertLess(slot, len(storage))
+                                self.assertNotIn(slot, loaded)
+                                loaded.add(slot)
+                                storage[slot] = (ty + offset) * width + tx
+                output = [None] * (height * width)
+                consumed = set()
+                # A full-block barrier separates these two modeled phases.
+                for ty in range(4):
+                    for tx in range(64):
+                        for offset in range(0, 64, 4):
+                            if tx < height and ty + offset < width:
+                                slot = tx * pitch + ty + offset
+                                self.assertLess(slot, len(storage))
+                                self.assertIn(slot, loaded)
+                                self.assertNotIn(slot, consumed)
+                                consumed.add(slot)
+                                output_index = (ty + offset) * height + tx
+                                self.assertIsNone(output[output_index])
+                                output[output_index] = storage[slot]
+                self.assertEqual(loaded, consumed)
+                self.assertEqual(output, [row * width + col for col in range(width) for row in range(height)])
+
     def test_invalid_shapes_variants_and_timing_are_refused(self):
         base = probe.default_cases()[0]
         for field, value in (("rows", 0), ("cols", -1), ("rows", 1 << 25), ("cols", 66),
@@ -228,7 +305,7 @@ class TransposeTest(unittest.TestCase):
     def records(self, variant="tile64_pad1"):
         case = dict(id="transpose_test", rows=65, cols=63, variant=variant, warmups=10, samples=10, launches=10)
         metadata = probe.launch_metadata(case)
-        return case, [
+        records = [
             dict(type="device", name="MetaX C550", visible_device_count=1, wave_size_api=64,
                  pci_bus_id="0000:01:00.0", runtime_version_api=1, driver_version_api=1),
             dict(type="protocol", schema_version=1, experiment=probe.EXPERIMENT,
@@ -242,9 +319,12 @@ class TransposeTest(unittest.TestCase):
                    host_enqueue_batch_us=50.0) for i in range(10)],
             dict(type="complete", cases=1, cpu_correctness_checked=False),
         ]
+        if variant in probe.DYNAMIC_SHARED_VARIANTS:
+            records[2]["function_attributes_before_timing"]["maxDynamicSharedSizeBytes"] = 32768
+        return case, records
 
     def test_actual_shared_size_is_observed_not_forced_to_intended_size(self):
-        for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS):
+        for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS, *probe.DYNAMIC_SHARED_VARIANTS):
             case, records = self.records(variant)
             self.assertEqual(len(probe.validate_records(records, [case])[case["id"]]), 10)
 
@@ -270,6 +350,40 @@ class TransposeTest(unittest.TestCase):
         # Runtime attributes remain independent observations even for one source allocation.
         probe.validate_records(first_records, [first_case])
         probe.validate_records(second_records, [second_case])
+
+    def test_dynamic_request_metadata_and_limit_attribute_are_required_and_distinct(self):
+        for variant in probe.DYNAMIC_SHARED_VARIANTS:
+            for field in ("requested_dynamic_shared_bytes", "requested_shared_elements", "shared_pitch_elements"):
+                for value in (None, True, 0, -1, "16384", 16384.0):
+                    case, records = self.records(variant)
+                    if value is None:
+                        records[2].pop(field)
+                    else:
+                        records[2][field] = value
+                    with self.subTest(variant=variant, field=field, value=value), self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                        probe.validate_records(records, [case])
+            case, records = self.records(variant)
+            requested = records[2]["requested_dynamic_shared_bytes"]
+            records[2]["requested_dynamic_shared_bytes"] = 16640 if requested == 16384 else 16384
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                probe.validate_records(records, [case])
+            case, records = self.records(variant)
+            records[2]["intended_static_shared_bytes"] = requested
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                probe.validate_records(records, [case])
+            for value in (None, True, -1, 32768.0, "32768"):
+                case, records = self.records(variant)
+                attributes = records[2]["function_attributes_before_timing"]
+                if value is None:
+                    attributes.pop("maxDynamicSharedSizeBytes")
+                else:
+                    attributes["maxDynamicSharedSizeBytes"] = value
+                with self.subTest(variant=variant, value=value), self.assertRaisesRegex(ValueError, "maxDynamicSharedSizeBytes"):
+                    probe.validate_records(records, [case])
+            case, records = self.records(variant)
+            # API observations are not inferred from the source's static zero or launch request.
+            records[2]["function_attributes_before_timing"].update(sharedSizeBytes=256, maxDynamicSharedSizeBytes=0)
+            probe.validate_records(records, [case])
 
     def test_missing_or_invalid_geometry_and_function_metadata_are_refused(self):
         for field in ("rows", "cols", "variant", "grid_x", "grid_y", "grid_z", "block_x", "block_y", "block_z",

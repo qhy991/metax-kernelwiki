@@ -27,6 +27,11 @@ SHAPES = ((1, 1), (1, 65), (65, 1), (31, 33), (33, 31),
           (262144, 64), (65536, 256), (4096, 4096), (262143, 63), (4095, 4097))
 VARIANTS = ("direct", "tile64", "tile64_pad1")
 SHARED_PITCH_VARIANTS = {"runtime_pitch64": 64, "runtime_pitch65": 65}
+DYNAMIC_SHARED_VARIANTS = {
+    "dynamic_pitch64_bytes16384": (64, 16384),
+    "dynamic_pitch64_bytes16640": (64, 16640),
+    "dynamic_pitch65_bytes16640": (65, 16640),
+}
 COLUMNS = ("id", "rows", "cols", "variant", "warmups", "samples", "launches")
 ENVIRONMENT = ("MACA_LAUNCH_MODE", "MACA_LAUNCH_BLOCKING", "MACA_DIRECT_DISPATCH",
                "MACA_CACHE_PATH", "MACA_CACHE_DISABLE")
@@ -59,13 +64,26 @@ def shared_pitch_cases() -> list[dict]:
             for rows, cols in SHAPES for variant in SHARED_PITCH_VARIANTS]
 
 
+def dynamic_shared_cases() -> list[dict]:
+    return [dict(id=f"transpose_r{rows}_c{cols}_{variant}", rows=rows, cols=cols, variant=variant,
+                 warmups=10, samples=10, launches=10)
+            for rows, cols in SHAPES for variant in DYNAMIC_SHARED_VARIANTS]
+
+
+def validate_dynamic_capacity(pitch: int, requested_bytes: int) -> None:
+    if type(pitch) is not int or pitch not in (64, 65):
+        raise ValueError("Dynamic shared pitch must be 64 or 65")
+    if type(requested_bytes) is not int or requested_bytes % 4 or requested_bytes < 64 * pitch * 4:
+        raise ValueError("Insufficient or invalid dynamic shared capacity for 64 pitched rows")
+
+
 def launch_metadata(case: dict) -> dict:
     rows, cols, variant = case["rows"], case["cols"], case["variant"]
     n = validate_shape(rows, cols)
-    if variant not in VARIANTS and variant not in SHARED_PITCH_VARIANTS:
+    if variant not in VARIANTS and variant not in SHARED_PITCH_VARIANTS and variant not in DYNAMIC_SHARED_VARIANTS:
         raise ValueError("Unknown transpose variant")
     tiled = variant != "direct"
-    padding = int(variant in ("tile64_pad1", "runtime_pitch65"))
+    padding = int(variant in ("tile64_pad1", "runtime_pitch65", "dynamic_pitch65_bytes16640"))
     result = dict(n=n, block_x=64 if tiled else 256, block_y=4 if tiled else 1, block_z=1,
                   grid_x=(cols + 63) // 64 if tiled else (n + 255) // 256,
                   grid_y=(rows + 63) // 64 if tiled else 1, grid_z=1,
@@ -74,6 +92,11 @@ def launch_metadata(case: dict) -> dict:
     if variant in SHARED_PITCH_VARIANTS:
         result.update(shared_pitch_elements=SHARED_PITCH_VARIANTS[variant],
                       allocated_shared_elements=64 * 65, intended_static_shared_bytes=64 * 65 * 4)
+    if variant in DYNAMIC_SHARED_VARIANTS:
+        pitch, requested_bytes = DYNAMIC_SHARED_VARIANTS[variant]
+        validate_dynamic_capacity(pitch, requested_bytes)
+        result.update(shared_pitch_elements=pitch, requested_dynamic_shared_bytes=requested_bytes,
+                      requested_shared_elements=requested_bytes // 4, intended_static_shared_bytes=0)
     return result
 
 
@@ -96,8 +119,11 @@ def read_plan(path: Path) -> list[dict]:
         ids.add(key)
         validate_shape(case["rows"], case["cols"])
         if ((case["rows"], case["cols"]) not in SHAPES
-                or (case["variant"] not in VARIANTS and case["variant"] not in SHARED_PITCH_VARIANTS)):
+                or (case["variant"] not in VARIANTS and case["variant"] not in SHARED_PITCH_VARIANTS
+                    and case["variant"] not in DYNAMIC_SHARED_VARIANTS)):
             raise ValueError("Case is outside the fixed experiment plan")
+        if case["variant"] in DYNAMIC_SHARED_VARIANTS:
+            validate_dynamic_capacity(*DYNAMIC_SHARED_VARIANTS[case["variant"]])
         if (case["warmups"], case["samples"], case["launches"]) != (10, 10, 10):
             raise ValueError("Unsupported launch or timing protocol")
         cases.append(case)
@@ -114,9 +140,10 @@ def oracle_metadata() -> dict:
 
 def prepare(destination: Path, suite: str = "default") -> dict:
     _NATIVE.require_binary32_little_endian()
-    if suite not in ("default", "shared-pitch"):
+    suites = {"default": default_cases, "shared-pitch": shared_pitch_cases, "dynamic-shared": dynamic_shared_cases}
+    if suite not in suites:
         raise ValueError("Unknown preparation suite")
-    cases = default_cases() if suite == "default" else shared_pitch_cases()
+    cases = suites[suite]()
     destination.mkdir(parents=True, exist_ok=False)
     with (destination / "input.f32").open("wb") as handle:
         for start in range(0, INPUT_ELEMENTS, 1 << 18):
@@ -210,6 +237,10 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str, list[d
                            for field, minimum in (("maxThreadsPerBlock", 1), ("numRegs", 0),
                                                   ("sharedSizeBytes", 0), ("localSizeBytes", 0)))):
                 raise ValueError(f"Missing or invalid function attributes: {key}")
+            if case["variant"] in DYNAMIC_SHARED_VARIANTS:
+                maximum = attributes.get("maxDynamicSharedSizeBytes")
+                if type(maximum) is not int or maximum < 0:
+                    raise ValueError(f"Missing or invalid maxDynamicSharedSizeBytes: {key}")
             declarations.append(key)
         elif kind == "sample":
             if not declarations or key != declarations[-1]:
@@ -266,7 +297,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     preparation = commands.add_parser("prepare")
     preparation.add_argument("directory", type=Path)
-    preparation.add_argument("--suite", choices=("default", "shared-pitch"), default="default")
+    preparation.add_argument("--suite", choices=("default", "shared-pitch", "dynamic-shared"), default="default")
     checker = commands.add_parser("check")
     checker.add_argument("input_directory", type=Path)
     checker.add_argument("output_directory", type=Path)

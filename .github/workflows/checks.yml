@@ -20,3 +20,4 @@ jobs:
           bash -n experiments/native/compile.sh
           bash -n experiments/memory_order/compile.sh
           bash -n experiments/transpose/compile.sh
+          bash -n experiments/wave_collectives/compile.sh

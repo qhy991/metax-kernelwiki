@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Toolchain](toolchain.md) · [Methodology](methodology.md)
 
-Accessed **2026-10-07**, with additional C++ intrinsic-contract checks on **2026-10-08**. This page indexes sources; it is not a C550 measurement record. Device evidence must retain the product, native architecture, software versions, commands, and raw outputs, with a link to the relevant experiment.
+Accessed **2026-10-07**, with additional C++ intrinsic and LLVM artifact-format checks on **2026-10-08**. This page indexes sources; it is not a C550 measurement record. Device evidence must retain the product, native architecture, software versions, commands, and raw outputs, with a link to the relevant experiment.
 
 ## Product and version scope
 
@@ -20,7 +20,7 @@ Runtime-guide links now select the official **3.5.3.x** version. The [legacy `/p
 | [Runtime Guide 3.5.3.x: Binary Cache][runtime-cache] and [environment variables][runtime-env] | Section 4.3 describes recompilation and binary caching when the unannotated vector-add example uses a 1024-thread block, exceeding 512. Section 4.4 defines the cache path and disable switch. | This documents that example, not a performance guarantee for every kernel. Distinguish device limits, function attributes, first launch, and later execution locally. |
 | [MXMACA C++ language extensions 3.5.3.x][cpp-extensions] | Shuffle mask, width, and source-lane rules; integer collectives and synchronization semantics. | The active version selector was checked. The series contract still needs installed-header, compilation, and C550 correctness checks. See [toolchain caveats](toolchain.md#64-lane-collective-contracts-and-measured-scope) for ambiguous wording. |
 | [MXMACA release overview][release-overview] | Software-component versions and supported product families. | `latest` is mutable and does not identify installed software. |
-| [MXMACA new features and changes][release-changes] | Version history: for example, section 3.7.0 records `-offload-arch=native` and tool/compiler changes. | This does not show that a 3.5.3 host has newer features; older notes also do not rule out local backports. |
+| [MXMACA new features and changes][release-changes] | The SDK 3.5.3.18 section lists `-offload-arch=native`; its stated product group includes C550. | The installed compiler still needs its own option check. Other sections have different product scopes; their features do not automatically apply to C550. |
 | [MXMACA known issues and limitations][release-limits] | Version- and scenario-specific leads, including some communication-operator issues on C550 OAM. | Do not generalize a scoped limitation to all C550 kernels or copy environment settings as optimization defaults. |
 | [Official performance-tuning guide README][guide] | Navigation for `guide/`, `case/`, and `microbenchmark/`; the repository names C500 and A100 as its test devices. | C500 measurements are hypotheses to test locally. No license was declared on the inspected page; prefer links, paraphrases, and independently written probes. |
 | [Official vector-add tutorial][vector-guide] | Examples of the `cucc` route, device memory, warmup, event timing, and error checking. | The tutorial targets C500. CUDA-named interfaces are compatibility APIs, not NVIDIA hardware identity. |
@@ -41,6 +41,10 @@ The mcTriton links below are pinned to **`7dd407c26568fceaca44cb894138e5202d3698
 | [triton_metax.cc][triton-codegen] | Forms a fatbin from LLVM IR through MXCC; includes switches to print the compilation command and retain intermediate files. |
 | [vLLM-metax event-timing wrapper][kernel-timer] | Pinned at `f2fcc59c314f1fbc7897f46d465e5f7c35900e8a`; an implementation using `mc_runtime.h` and `mcEventElapsedTime` directly. |
 | [mcTVM][mctvm] | Another official compilation route. Its README's `metax/mxc-c500` label explicitly targets C500. |
+
+## Compiled artifact formats
+
+The [compiled-artifact guide](compiled-artifacts.md) links LLVM 19.1 documentation for binary bundles, bitcode wrappers, section extraction, bitcode decoding and contraction flags. These references explain format and tool contracts. The local inspection separately verifies the installed MetaX tools and the contents of the retained q7 executable. Upstream LLVM documentation does not specify MetaX runtime payload selection or WMMA precision.
 
 ## Shared memory and synchronization
 

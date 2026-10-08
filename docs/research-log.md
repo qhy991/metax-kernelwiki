@@ -225,8 +225,18 @@ Frozen source passed 209 CPU tests, including 12 new tests. A host-only extracti
 
 This separately built one-launch collector reproduces the mismatch on the tested stack. It does not establish a cold device, identical binary or isolated arithmetic cause. Its retained executable can support subsequent CPU-only inspection or a separately qualified compiler/runtime comparison; newly recompiled IR must remain distinct from the executed artifact.
 
+## 2026-10-09: Inspecting the retained q7 binary
+
+The executable from source `9b7bef6` and run `20261008-wmma-q7-repro` was inspected without rebuilding or executing it. Its 34,629-byte `.mc_fatbin` contains an empty host entry, 11,216 bytes of wrapped LLVM bitcode and an 18,232-byte native device ELF, both labeled `xcore1000`. SDK extraction preserved the original executable and matched each declared byte range. Independent bounded parsing and 14 extracted-copy comparisons agreed. The new inspection ID uses the UTC date, `20261008-wmma-q7-binary-inspection`.
+
+SDK `llvm-dis` decoded the actual packaged bitcode. WMMA has five static MMA intrinsic sites across remainder and unrolled loops; scalar has eight static `fmul contract`/`fadd contract` pairs. These are IR observations, not runtime operation counts, native instruction identities or precision guarantees. Native metadata reports 28/36 mtregs and a 512-thread block attribute; it does not establish device ceilings or occupancy. System objdump could not decode the device ELF, and the bounded SDK/PATH search found none of the tested decoder names.
+
+[Inspection guide and verified commands](compiled-artifacts.md) · [Selected static observations](../data/inspections/20261008-q7-binary.json). Runtime payload selection and arithmetic cause remain unresolved. No GPU lease, new device execution, numerical acceptance, performance measurement or open-cake-ir promotion occurred. Full binaries and IR remain private retained evidence. Public English navigation now links the inspection, while the toolchain guide points readers to the canonical WMMA findings instead of repeating the full chronology.
+
+A fresh check of the official release history corrects the documentation's earlier `-offload-arch=native` attribution: it appears under SDK 3.5.3.18, whose stated product group includes C550. The reproduction template still uses an explicit, locally evidenced architecture; this source correction adds no compiler execution or device qualification.
+
 ## Next questions
 
-- Inspect the retained single-case executable and its embedded code objects with supported CPU-only tools. Keep observations of that actual artifact separate from IR emitted by recompiling the source, and report unavailable native instruction decoding as a coverage limit.
+- Establish runtime selection between the retained bitcode and native ELF, or qualify a native decoder for the exact C550/SDK pair. Preserve the successful extraction evidence and the unresolved native-arithmetic scope.
 - Qualify any independent SDK/compiler environment and its allocation/release lifecycle before a numerical comparison. Existing container package or requested-mount metadata alone is insufficient; preserve installed SDKs and production containers.
 - Preserve the original failures, exact oracle and non-performance diagnostic status. Neither a float fragment type nor the scalar source label identifies the native arithmetic mechanism.

@@ -8,6 +8,7 @@ The wiki is written in **English**. Original source URLs retain their published 
 
 - **Writing a C550 kernel?** Read [device identity](wiki/device-identity.md) and the [MACA toolchain guide](docs/toolchain.md), then search for the operation or mechanism you need.
 - **Evaluating an optimization?** Read the [measurement contract](docs/methodology.md) and the relevant finding below. Check its inputs, software version, correctness result, and limitations.
+- **Inspecting compiled code?** Follow [compiled MACA artifacts](docs/compiled-artifacts.md) for CPU-only extraction from a retained executable, embedded-bitcode decoding, and the limits of native-code inspection.
 - **Following the research?** The [research log](docs/research-log.md) records completed experiments and open questions. The [source index](docs/sources.md) separates official documentation from upstream code and local evidence.
 
 ## Measured findings
@@ -21,7 +22,7 @@ The published device experiments use one **C550 with MACA 3.5.3.18**. Each page 
 | Transpose | Tiling, shared-memory row pitch, and dynamic shared-memory requests have controlled comparisons. The request-size response depends on shape. | [Tiling and shared memory](wiki/transpose.md) |
 | Wave collectives | Full typed masks select 64- or 32-element reduction groups in the tested SDK. Physical wave width remains 64. | [Shuffle, reduction, and mask types](wiki/wave-collectives.md) |
 | Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
-| WMMA exactness | A standalone q7 collector reproduces the -2^-31 residual after one WMMA launch, with exact scalar output and matching input snapshots. Earlier magnitude, placement and sign controls remain documented; WMMA performance is unaccepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
+| WMMA exactness | The single-launch q7 collector reproduces a -2^-31 WMMA residual, with exact scalar output and matching input snapshots. Performance remains unaccepted. | [Current findings](wiki/wmma-exactness.md#current-findings) · [Detailed controls](wiki/wmma-exactness.md#reading-guide) |
 | Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
 
 These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.
@@ -33,12 +34,12 @@ Retrieval uses only the Python standard library and requires no GPU or network:
 ```sh
 python3 scripts/wiki.py list
 python3 scripts/wiki.py search wave
-python3 scripts/wiki.py show c550-wmma-exactness
 python3 scripts/wiki.py show c550-wmma-exactness --summary
+python3 scripts/wiki.py show c550-wmma-exactness
 python3 scripts/wiki.py validate
 ```
 
-The WMMA page provides a concise `--summary` view drawn from its own Current findings section. Full `show` remains available for every page.
+The WMMA `--summary` view reads the page's [Current findings](wiki/wmma-exactness.md#current-findings) section. Omit `--summary` for the full evidence; full `show` works for every page.
 
 [`data/catalog.json`](data/catalog.json) is the single retrieval index. Each entry names its confidence, evidence scope, sources, and limitations. The command-line tool reads the same pages linked above.
 

@@ -17,7 +17,7 @@
 | What happens under exact powers of two? | At q6/q7/q12, A-only scaling preserves the normalized failing residual. Reciprocal A/B scaling holds products fixed and preserves complete outputs across the five tested exponent pairs. | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal scaling](#successor-reciprocal-exponents-with-fixed-products) |
 | Does moving signs between factors change the result? | At q6/q7/q12, transferring either or both term signs between A and B preserves complete outputs within each q/role. q6 pairs are exact; q7/q12 retain -2^-31. | [Factor-sign transfer](#successor-transferring-factor-signs-at-fixed-products) |
 
-The cause remains unresolved: these observations do not identify native instruction precision, rounding or a unique compiler/hardware defect. A float output type alone does not establish stepwise IEEE FP32 arithmetic. Validate each workload against its own numerical contract; these bounded diagnostics do not qualify arbitrary-input or framework GEMM.
+The cause remains unresolved. [Retained-binary inspection](../docs/compiled-artifacts.md) now identifies packaged bitcode and a native ELF, but not runtime payload selection or native arithmetic. These observations do not identify instruction precision, rounding or a unique compiler/hardware defect. A float output type alone does not establish stepwise IEEE FP32 arithmetic. Validate each workload against its own numerical contract; these bounded diagnostics do not qualify arbitrary-input or framework GEMM.
 <!-- kernelwiki:summary:end -->
 
 ## Reading guide
@@ -31,6 +31,7 @@ The cause remains unresolved: these observations do not identify native instruct
 | What changes with placement, signs or magnitudes? | [Components and K slots](#successor-single-products-and-k-slot-permutations) · [Sign configurations](#successor-fixed-magnitude-sign-configurations) · [Fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
 | Does exact scaling change the numerical response? | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal exponents at fixed products](#successor-reciprocal-exponents-with-fixed-products) |
 | Does factor-sign placement change it? | [Sign transfer at fixed products](#successor-transferring-factor-signs-at-fixed-products) |
+| What does the executed host file package? | [Compiled-artifact inspection](../docs/compiled-artifacts.md) |
 | How can I reproduce one concrete input? | [Standalone q7 package and results](#standalone-q7-reproducer-one-launch-per-variant) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
@@ -461,7 +462,7 @@ The [complete single-case result](../data/results/20261008-wmma-q7-repro.json) c
 
 Frozen source passed 209 CPU tests, including 12 new checker/compile-interface tests. A host-only extraction of the actual metadata output statements matched both orders' 16 records using synthetic observed fields; that check was not GPU execution. The single native build and four pre-device CLI/output-directory refusals passed with devices hidden. All three workers and the profiled application exited and passed release checks. Earlier probe files were unchanged; this study validates the new single-case package and retains the older studies as their own evidence. No result was promoted to open-cake-ir.
 
-The retained executable now provides a concrete starting point for CPU-only code-object inspection or a separately qualified compiler/runtime comparison. Inspection should name the actual executed artifact; IR emitted by a new compilation is a separate observation. No such comparison or instruction-level explanation is established by this reproduction.
+A subsequent [CPU-only inspection of this retained executable](../docs/compiled-artifacts.md) extracted both packaged payloads and decoded its embedded bitcode without recompiling the source. It identifies the WMMA intrinsic and scalar contraction flags, plus native symbols and resource metadata. Runtime payload selection, final native instructions and the arithmetic cause remain unresolved. The original failed numerical record is unchanged.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

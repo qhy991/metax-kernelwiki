@@ -1,0 +1,385 @@
+{
+  "schema": "metax-kernelwiki.compiled-artifact-inspection.v1",
+  "inspection_id": "20261008-wmma-q7-binary-inspection",
+  "inspected_date_utc": "2026-10-08",
+  "evidence_scope": "local-static-artifact-inspection",
+  "source_commit": "9b7bef6ea79e7d71394f92a32987779d8fc18274",
+  "retained_run": "20261008-wmma-q7-repro",
+  "numerical_record": "data/results/20261008-wmma-q7-repro.json",
+  "numerical_publication_commit": "575f7ac3b0561d8f3e8ab1dbcb1962a7f84dd416",
+  "artifact": {
+    "role": "retained executed host collector",
+    "logical_path": "build/repro",
+    "publicly_distributed": false,
+    "bytes": 88880,
+    "format": "ELF64 little-endian",
+    "host_machine_raw": 62,
+    "host_sections": [
+      {
+        "name": ".mc_fatbin",
+        "offset": 36864,
+        "size": 34629,
+        "address": 4231168,
+        "alignment": 4096
+      },
+      {
+        "name": ".mcFatBinSegment",
+        "offset": 71496,
+        "size": 24,
+        "address": 4265800,
+        "alignment": 8
+      }
+    ]
+  },
+  "build": {
+    "sdk_path": "/opt/maca-3.5.3",
+    "runtime_version": "3.5.3.18",
+    "mxcc_version": "1.0.0 (6477545d4d)",
+    "command": [
+      "/opt/maca-3.5.3/mxgpu_llvm/bin/mxcc",
+      "-O3",
+      "-std=c++17",
+      "-x",
+      "maca",
+      "-offload-arch=xcore1000",
+      "--maca-path=/opt/maca-3.5.3",
+      "source/experiments/wmma_q7/repro.cpp",
+      "-o",
+      "build/repro"
+    ],
+    "scope": "Original retained compile command with source/output paths normalized; no new build during inspection."
+  },
+  "host_wrapper": {
+    "tag_raw": 1296122689,
+    "version": 1,
+    "fatbin_address": 4231168,
+    "reserved": 0
+  },
+  "bundle": {
+    "magic": "__CLANG_OFFLOAD_BUNDLE__",
+    "integer_encoding": "little-endian unsigned 64-bit",
+    "descriptor_bytes": 202,
+    "entries": [
+      {
+        "index": 0,
+        "target": "host-x86_64-unknown-linux-gnu",
+        "offset": 4096,
+        "size": 0,
+        "end": 4096
+      },
+      {
+        "index": 1,
+        "target": "maca-mxc-metax-macahca--xcore1000-bc",
+        "offset": 4096,
+        "size": 11216,
+        "end": 15312
+      },
+      {
+        "index": 2,
+        "target": "maca-mxc-metax-macahca--xcore1000",
+        "offset": 16384,
+        "size": 18232,
+        "end": 34616
+      }
+    ],
+    "trailing_bytes_hex": "5f5f46494c455f454e445f5f00",
+    "nonempty_ranges_bounded_and_nonoverlapping": true
+  },
+  "bitcode_wrapper": {
+    "magic_raw": 186106078,
+    "version": 0,
+    "bitcode_offset": 20,
+    "bitcode_size": 11184,
+    "cpu_type_raw": 255,
+    "trailing_padding_bytes": 12,
+    "trailing_padding_all_zero": true
+  },
+  "device_elf": {
+    "format": "ELF64 little-endian",
+    "machine_raw": 253,
+    "section_count": 15,
+    "note": {
+      "name": "MetaX",
+      "type_raw": 48,
+      "descriptor_bytes": 3493,
+      "macahca.version": [
+        1,
+        0
+      ]
+    },
+    "kernels": [
+      {
+        "variant": "wmma",
+        "symbol": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+        "device_elf_file_offset": 8704,
+        "host_file_offset": 61952,
+        "symbol_bytes": 1304,
+        "metadata": {
+          ".mtreg_count": 28,
+          ".streg_count": 20,
+          ".max_block_size": 512,
+          ".private_memory_size": 0,
+          ".share_memory_size": 0,
+          ".kernarg_size_bytes": 112
+        }
+      },
+      {
+        "variant": "scalar",
+        "symbol": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+        "device_elf_file_offset": 10240,
+        "host_file_offset": 63488,
+        "symbol_bytes": 1352,
+        "metadata": {
+          ".mtreg_count": 36,
+          ".streg_count": 19,
+          ".max_block_size": 512,
+          ".private_memory_size": 0,
+          ".share_memory_size": 0,
+          ".kernarg_size_bytes": 112
+        }
+      }
+    ]
+  },
+  "embedded_ir": {
+    "origin": "SDK llvm-dis output from byte-matched wrapped bitcode extracted from retained executed q7 host ELF; no recompilation",
+    "target_triple": "mxc-metax-macahca",
+    "kernel_calling_convention": "metaxgpu_kernel",
+    "target_cpu": "xcore1000",
+    "target_features": "+xcore1000",
+    "wmma_intrinsic": "llvm.mxc.mma.f32.16x16x16f16",
+    "wmma_intrinsic_types": {
+      "operands": [
+        "<4 x half>",
+        "<4 x half>",
+        "<4 x float>"
+      ],
+      "result": "<4 x float>"
+    },
+    "wmma_unroll_structure": "One call site in remainder loop label18; four call sites in unrolled loop label81. chunks remains runtime parameter in this IR.",
+    "scalar_conversion_intrinsic": "llvm.convert.from.fp16.f32",
+    "scalar_arithmetic": [
+      "fmul contract float",
+      "fadd contract float"
+    ],
+    "functions": {
+      "wmma": {
+        "function": "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
+        "start_line": 202,
+        "end_line": 422,
+        "mma_call_sites": 5,
+        "fp16_conversion_call_sites": 0,
+        "fmul_contract_sites": 0,
+        "fadd_contract_sites": 0,
+        "attribution": "Static sites in decoded retained bitcode; not dynamic operations or native instructions."
+      },
+      "scalar": {
+        "function": "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj",
+        "start_line": 434,
+        "end_line": 574,
+        "mma_call_sites": 0,
+        "fp16_conversion_call_sites": 16,
+        "fmul_contract_sites": 8,
+        "fadd_contract_sites": 8,
+        "attribution": "Static sites in decoded retained bitcode; not dynamic operations or native instructions."
+      }
+    }
+  },
+  "tools": {
+    "llvm-objcopy": "19.1.3",
+    "llvm-nm": "19.1.3",
+    "llvm-dis": "19.1.3",
+    "clang-offload-bundler": "1.0.0 (6477545d4d)",
+    "system_objdump": "GNU Binutils for Ubuntu 2.38"
+  },
+  "extraction": {
+    "retained_input_unchanged": true,
+    "section_matches_original_range": true,
+    "payloads": [
+      {
+        "target": "maca-mxc-metax-macahca--xcore1000-bc",
+        "file": "embedded.bc",
+        "bytes": 11216,
+        "matches_declared_bundle_range": true
+      },
+      {
+        "target": "maca-mxc-metax-macahca--xcore1000",
+        "file": "embedded-device.elf",
+        "bytes": 18232,
+        "matches_declared_bundle_range": true
+      }
+    ],
+    "commands": [
+      {
+        "name": "dump-fatbin",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-objcopy",
+          "--dump-section=.mc_fatbin=inspection/fatbin.bundle",
+          "retained-repro",
+          "inspection/host-copy.elf"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "bundler-version",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--version"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "list-bundles",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--list",
+          "--input=inspection/fatbin.bundle"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "unbundle-embedded.bc",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/fatbin.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1000-bc",
+          "--output=inspection/embedded.bc"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "unbundle-embedded-device.elf",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/clang-offload-bundler",
+          "--type=bc",
+          "--unbundle",
+          "--input=inspection/fatbin.bundle",
+          "--targets=maca-mxc-metax-macahca--xcore1000",
+          "--output=inspection/embedded-device.elf"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "llvm-dis-version",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-dis",
+          "--version"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "decode-retained-bitcode",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-dis",
+          "inspection/embedded.bc",
+          "-o",
+          "inspection/embedded.ll"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "device-header",
+        "command": [
+          "readelf",
+          "-h",
+          "inspection/embedded-device.elf"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "device-sections",
+        "command": [
+          "readelf",
+          "-SW",
+          "inspection/embedded-device.elf"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "device-symbols",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/llvm-nm",
+          "--format=posix",
+          "inspection/embedded-device.elf"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "device-notes",
+        "command": [
+          "readelf",
+          "-n",
+          "inspection/embedded-device.elf"
+        ],
+        "exit": 0
+      }
+    ]
+  },
+  "native_decoding": {
+    "commands": [
+      {
+        "name": "objdump-version",
+        "command": [
+          "objdump",
+          "--version"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "native-autodetect-disassembly",
+        "command": [
+          "objdump",
+          "-d",
+          "inspection/embedded-device.elf"
+        ],
+        "exit": 1
+      },
+      {
+        "name": "mxcc-hidden-help",
+        "command": [
+          "/opt/maca-3.5.3/mxgpu_llvm/bin/mxcc",
+          "--help-hidden"
+        ],
+        "exit": 1
+      }
+    ],
+    "autodetect_error": "can't disassemble for architecture UNKNOWN!",
+    "mxcc_hidden_help_error": "unknown argument: --help-hidden",
+    "sdk_bin_and_path_candidates_absent": [
+      "llvm-objdump",
+      "llvm-mc",
+      "mxc-objdump",
+      "mc-objdump",
+      "mx-objdump"
+    ],
+    "forced_architecture_used": false
+  },
+  "verification": {
+    "independent_bounded_structure_review": "passed",
+    "independent_extraction_comparisons": 14,
+    "independent_extraction_comparisons_equal": 14,
+    "independent_embedded_ir_review": "passed"
+  },
+  "scope": {
+    "new_compilation": false,
+    "new_device_execution": false,
+    "gpu_lease_acquired": false,
+    "native_isa_decoded": false,
+    "runtime_payload_selection_established": false,
+    "arithmetic_cause_established": false,
+    "new_numerical_acceptance": false,
+    "new_performance_measurement": false,
+    "limitations": [
+      "Static IR sites and symbol byte sizes are not executed-operation or native instruction counts.",
+      "Intrinsic types do not establish internal precision or rounding; contract flags do not prove actual fusion.",
+      "Raw device e_machine 253 does not qualify a generic ARC decoder.",
+      "Packaged alternatives and false trace recompilation flags do not identify the selected runtime payload.",
+      "The bounded decoder inventory does not establish universal absence of a decoder.",
+      "Kernel metadata does not establish hardware ceilings, occupancy or the complete argument ABI.",
+      "Full executable, extracted binaries, IR, parsers and logs remain in private evidence; public command paths are normalized.",
+      "The linked numerical record retains failed exact acceptance and unaccepted performance."
+    ]
+  }
+}

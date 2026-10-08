@@ -71,6 +71,8 @@ Start with the [standalone q7 reproducer](../experiments/wmma_q7/README.md) for 
 
 For CPU-only inspection, follow the [compiled-artifact guide](compiled-artifacts.md). It extracts embedded bitcode and native device payloads from the retained executable and decodes the bitcode into LLVM IR. This identifies packaged code; it does not by itself establish runtime payload selection, executed native instructions, or arithmetic precision. Keep this evidence separate from a new source compilation.
 
+The subsequent [explicit native-module route](../experiments/wmma_module/README.md) uses a host-only C++ driver and supplies only that extracted ELF. Its [measured result](../wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) reproduces the residual with exact scalar output. The tested `kernelParams` call follows installed and published examples despite a contradictory API warning; its success is bounded to these kernels and arguments.
+
 A separate CPU-only metadata query found Torch 2.10.0 and Triton 3.6.0 with the package suffix `metax3.8.0.4.c600u` in an existing containerd environment. That is not the host 3.5.3 test environment. This wiki has not executed or qualified a matrix kernel in that container. The online mcTriton 3.0 observations below likewise do not replace inspection of that installation's backend.
 
 ## mcTriton source observations

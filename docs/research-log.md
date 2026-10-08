@@ -235,8 +235,20 @@ SDK `llvm-dis` decoded the actual packaged bitcode. WMMA has five static MMA int
 
 A fresh check of the official release history corrects the documentation's earlier `-offload-arch=native` attribution: it appears under SDK 3.5.3.18, whose stated product group includes C550. The reproduction template still uses an explicit, locally evidenced architecture; this source correction adds no compiler execution or device qualification.
 
+## 2026-10-09: q7 through an explicitly supplied native ELF
+
+Source `b463205` adds a host-only module collector with no embedded device fatbin. It supplies only the 18,232-byte native ELF extracted from the retained `9b7bef6` executable, loads it through `mcModuleLoadData`, looks up the original symbols and passes four argument addresses to `mcModuleLaunchKernel` with null `extra`. The installed sample and pinned mcTriton use this convention despite the 3.5.3 API warning; its operational acceptance was tested rather than inferred. The run ID `20261008-wmma-module-q7` uses the UTC date.
+
+WMMA-first, scalar-first and a separate resource trace all load, launch and unload successfully. Each WMMA output has only C00 unequal: `0xbb800001` versus exact `0xbb800000`, residual -2^-31. All three scalar matrices are exact. Independent decoding checks all 26,880 prepared/snapshot/payload/guard words; every captured input agrees, payloads are finite and guards intact. After complete input matching, all six guarded outputs equal their corresponding earlier q7 collection. Each retained checker also verifies the supplied image against the independent extraction at that handoff boundary. Exact acceptance remains failed and no performance is accepted.
+
+[Module reproduction guide](../experiments/wmma_module/README.md) · [Bounded conclusion](../wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) · [Complete numerical record](../data/results/20261008-wmma-module-q7.json). The trace contains exactly two events in the declared order, with blocks 64/256, registers 28/36, zero shared/private fields and false recompilation descriptors. Raw durations retain unverified units. The attempted `mcTracer --version` query returned zero with an `execvpe` error and established no build version; this failed metadata attempt remains recorded. `MACA_MODULE_LOADING` was not captured.
+
+The frozen source passed 221 CPU tests, including 12 new module-checker tests. A host-only GNU C++ build and seven pre-device argument/image refusals passed. Factoring the shared q7 file analysis preserves the three old checker reports exactly. All three workers and one profiled application exited with verified release before CPU checking. No new device-source compilation or open-cake-ir promotion occurred.
+
+The native image can therefore reproduce the residual when explicitly supplied. This does not determine the older fatbin's selected entry, rule out loader/cache transformations or explain native arithmetic. The public English page retains that distinction and the original failures.
+
 ## Next questions
 
-- Establish runtime selection between the retained bitcode and native ELF, or qualify a native decoder for the exact C550/SDK pair. Preserve the successful extraction evidence and the unresolved native-arithmetic scope.
+- Establish the earlier fatbin's payload selection or obtain evidence of the final runtime instructions for this C550/SDK pair. The explicit native-module result establishes its own route and does not settle either question.
 - Qualify any independent SDK/compiler environment and its allocation/release lifecycle before a numerical comparison. Existing container package or requested-mount metadata alone is insufficient; preserve installed SDKs and production containers.
 - Preserve the original failures, exact oracle and non-performance diagnostic status. Neither a float fragment type nor the scalar source label identifies the native arithmetic mechanism.

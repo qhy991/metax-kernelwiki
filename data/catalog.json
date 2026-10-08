@@ -217,7 +217,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA exactness: standalone single-launch q7 reproduction",
+      "title": "C550 WMMA exactness: q7 reproduction through native module loading",
       "tags": [
         "WMMA",
         "matrix",
@@ -264,7 +264,11 @@
         "single-case reproducer",
         "single launch",
         "q7",
-        "standalone"
+        "standalone",
+        "native ELF",
+        "module loading",
+        "kernelParams",
+        "explicit image"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -281,10 +285,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/2725811e7242d7ab113bba0211377c74a30114b5",
         "https://github.com/qhy991/metax-kernelwiki/tree/b1eefc4e4263cf0a001a691d15ff9a1bd314b493",
         "https://github.com/qhy991/metax-kernelwiki/tree/747c7b59c4bcb4ec5a4454ca1635dee9a2ee84fe",
-        "https://github.com/qhy991/metax-kernelwiki/tree/9b7bef6ea79e7d71394f92a32987779d8fc18274"
+        "https://github.com/qhy991/metax-kernelwiki/tree/9b7bef6ea79e7d71394f92a32987779d8fc18274",
+        "https://github.com/qhy991/metax-kernelwiki/tree/b463205eff646cd0c88fe26fd51838be1f8f1726"
       ],
-      "result": "data/results/20261008-wmma-q7-repro.json",
-      "limitations": "One fixed q7 input in three paired processes reproduces a single WMMA C00 residual of -2^-31; all scalar outputs are exact. Each implementation launches once with no warmups or collector timing. Inputs, guards and complete historical buffers agree. The changed host package and launch history do not establish a cold device, identical binary, arithmetic cause or performance result."
+      "result": "data/results/20261008-wmma-module-q7.json",
+      "limitations": "One fixed q7 input in three paired processes also reproduces the WMMA residual when only the retained native ELF is supplied. Scalar outputs, input snapshots, guards and six historical buffers agree. This explicit route does not identify the earlier fatbin selection, final instruction transformations or arithmetic cause. Exact acceptance remains failed; performance and tracer time units are unaccepted."
     }
   ]
 }

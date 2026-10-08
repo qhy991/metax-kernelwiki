@@ -90,6 +90,8 @@ System GNU `objdump` 2.38 failed automatic disassembly with exit 1 and `can't di
 
 The next useful evidence would identify runtime payload selection and any post-load transformations, or qualify a native decoder for this C550/SDK pair. The retained trace's false recompilation flags alone do not select between the packaged bitcode and native ELF. The q7 exactness failure remains unexplained and performance remains unaccepted. This CPU-only inspection adds no device execution, numerical acceptance or performance measurement.
 
+A later, separate [native-module experiment](../wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) supplies only the extracted native ELF to a host-only driver. It successfully loads and launches both kernels and retains the same q7 residual. That device evidence belongs to its own frozen source and result; it does not establish the earlier fatbin's payload choice or final instruction identity.
+
 [bundle]: https://releases.llvm.org/19.1.0/tools/clang/docs/ClangOffloadBundler.html#bundled-binary-file-layout
 [bitcode]: https://releases.llvm.org/19.1.0/docs/BitCodeFormat.html#bitcode-wrapper-format
 [objcopy]: https://releases.llvm.org/19.1.0/docs/CommandGuide/llvm-objcopy.html

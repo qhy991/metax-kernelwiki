@@ -7,7 +7,7 @@
 
 **Scope:** one C550, MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Native FP16 WMMA with a float accumulator fails the tested exact-dyadic contract. Scalar controls are exact in the recorded comparisons. **No WMMA performance result is accepted.** Here q labels the base product pair `(q, -(q+1))/256`. The two-product example `(7,-8)/256` returns `0xbb800001` instead of exact `0xbb800000`.
 
-**Reproduce the fixed q7 input:** [standalone guide](../experiments/wmma_q7/README.md) · [one-launch results](#standalone-q7-reproducer-one-launch-per-variant). The compact collector retains the mismatch with one launch per implementation.
+**Reproduce the fixed q7 input:** [standalone guide](../experiments/wmma_q7/README.md) · [one-launch results](#standalone-q7-reproducer-one-launch-per-variant). A [host-only module driver](#successor-explicit-native-elf-module-loading) also reproduces the mismatch when supplied only the extracted native ELF.
 
 | Question | Bounded finding | Evidence |
 | --- | --- | --- |
@@ -32,6 +32,7 @@ The cause remains unresolved. [Retained-binary inspection](../docs/compiled-arti
 | Does exact scaling change the numerical response? | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal exponents at fixed products](#successor-reciprocal-exponents-with-fixed-products) |
 | Does factor-sign placement change it? | [Sign transfer at fixed products](#successor-transferring-factor-signs-at-fixed-products) |
 | What does the executed host file package? | [Compiled-artifact inspection](../docs/compiled-artifacts.md) |
+| Does explicitly supplying only its native ELF reproduce the result? | [Native-module route](#successor-explicit-native-elf-module-loading) |
 | How can I reproduce one concrete input? | [Standalone q7 package and results](#standalone-q7-reproducer-one-launch-per-variant) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
@@ -463,6 +464,30 @@ The [complete single-case result](../data/results/20261008-wmma-q7-repro.json) c
 Frozen source passed 209 CPU tests, including 12 new checker/compile-interface tests. A host-only extraction of the actual metadata output statements matched both orders' 16 records using synthetic observed fields; that check was not GPU execution. The single native build and four pre-device CLI/output-directory refusals passed with devices hidden. All three workers and the profiled application exited and passed release checks. Earlier probe files were unchanged; this study validates the new single-case package and retains the older studies as their own evidence. No result was promoted to open-cake-ir.
 
 A subsequent [CPU-only inspection of this retained executable](../docs/compiled-artifacts.md) extracted both packaged payloads and decoded its embedded bitcode without recompiling the source. It identifies the WMMA intrinsic and scalar contraction flags, plus native symbols and resource metadata. Runtime payload selection, final native instructions and the arithmetic cause remain unresolved. The original failed numerical record is unchanged.
+
+## Successor: explicit native ELF module loading
+
+Frozen source `b463205` adds a [host-only module driver](../experiments/wmma_module/README.md). GNU C++ 11.4 builds it against the installed MACA runtime; its host ELF contains no `.mc_fatbin`. The only supplied device image is the 18,232-byte native ELF extracted from the earlier `9b7bef6` q7 executable. This round performs no device-source compilation. The collector retains the exact buffer passed to `mcModuleLoadData`, resolves both original mangled symbols, and launches them through `mcModuleLaunchKernel` with four argument addresses and a null `extra`.
+
+This tests an explicit route. The 3.5.3 API documentation warns against `kernelParams`, while the installed sample and published mcTriton caller use it. All three collections below successfully load the retained native image, look up both functions, launch both kernels and unload the module. That supports this image, these two kernels, their four arguments and tested launch configurations; it does not qualify every module or argument interface.
+
+The fixed inputs, complete readbacks, separate guarded outputs and one-launch protocol follow the original q7 collector. There are no warmups or collector event timers. Independent CPU checks retain the same outcome in both orders and the separate resource trace:
+
+| Collection | WMMA C00 | Scalar C00 | Unequal WMMA / scalar elements |
+| --- | --- | --- | --- |
+| WMMA first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| Scalar first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| WMMA-first resource trace | `0xbb800001` | `0xbb800000` | 1 / 0 |
+
+Each WMMA result has signed residual **-2^-31**, one adjacent FP32 step below the exact reference. All other outputs are zero, all payloads finite, all guards intact and all input snapshots consistent. After complete prepared-input matching, all six guarded output buffers equal their corresponding earlier q7 collection. Each retained supplied-image check compares all 18,232 bytes with the independent extracted image. These are input-image checks, not observations of final runtime instruction bytes.
+
+The [complete result](../data/results/20261008-wmma-module-q7.json) retains three paired collections of one input: six matrices, 6,144 prepared halfwords, 18,432 snapshot halfwords, 1,536 payload values and 768 guards. Exact acceptance remains failed, with three WMMA mismatches and exact scalar output in all three cases. No performance is accepted.
+
+The trace contains exactly two GPU kernel events, in WMMA/scalar order, with blocks 64/256, registers 28/36, zero shared/private fields and one false recompilation descriptor each. These descriptors do not prove the absence of transformations. Exporter units remain unverified. The attempted `mcTracer --version` query returned zero but reported `execvpe` failure and supplied no version; this round does not establish the tracer build version from that query. `MACA_MODULE_LOADING` was not captured by this protocol.
+
+Frozen source passed 221 CPU tests. Seven host-only argument/image refusals passed before admission. All three workers and the profiled application exited with verified release; CPU analysis followed release. The shared q7 file-check refactor preserves all three earlier checker reports. No result was promoted to open-cake-ir.
+
+The residual therefore recurs when this native ELF is supplied directly. The earlier fatbin's selected payload, any loader/cache transformation, native instruction arithmetic and the cause of the residual remain unresolved.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

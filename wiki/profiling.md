@@ -10,9 +10,13 @@ Run `20261007-trace-01` passed an absolute path to `--odname`. This version appe
 
 Successor `20261007-trace-02` used relative `--odname trace` in a fresh run directory. It produced parseable JSON and passed the complete CPU output check for that copy. The first failure was retained, not rewritten as a success.
 
+## A version query can also return zero without a version
+
+During the [native-module q7 experiment](wmma-exactness.md#successor-explicit-native-elf-module-loading), `/opt/maca/bin/mcTracer --version` returned zero with `execvpe: No such file or directory` and only startup/end messages. That attempt established no tool build version. Its later actual capture was checked separately for the expected two kernel events and process release. The trace's `process_name` metadata contained `C500` and `version: 0.0.1`; those fields do not identify the tracer product build. Preserve the failed query and use observed output content, not exit status alone, when recording tool identity.
+
 ## What the trace actually covers
 
-The trace contains 5171 events, including **1020 GPU copy-kernel events** corresponding to 20 warmups and 1000 timed launches. Their correlation IDs match the host `mcLaunchKernel` calls one to one. Host API counts alone are not GPU dispatch counts.
+The earlier copy capture, `20261007-trace-02`, contains 5171 events, including **1020 GPU copy-kernel events** corresponding to 20 warmups and 1000 timed launches. Their correlation IDs match the host `mcLaunchKernel` calls one to one. Host API counts alone are not GPU dispatch counts.
 
 All 1020 kernel events report block 256, grid 16385, 6 registers per thread, zero static/dynamic shared memory and zero private memory. These are the tool's reports for this artifact, not a general register limit or occupancy calibration. `max_block_size=512` appears only in some events; missing values must not become zero. This field is distinct from the device runtime's maximum of 1024 threads.
 

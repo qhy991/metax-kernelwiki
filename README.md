@@ -21,7 +21,7 @@ The published device experiments use one **C550 with MACA 3.5.3.18**. Each page 
 | Transpose | Tiling, shared-memory row pitch, and dynamic shared-memory requests have controlled comparisons. The request-size response depends on shape. | [Tiling and shared memory](wiki/transpose.md) |
 | Wave collectives | Full typed masks select 64- or 32-element reduction groups in the tested SDK. Physical wave width remains 64. | [Shuffle, reduction, and mask types](wiki/wave-collectives.md) |
 | Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
-| WMMA exactness | An isolated two-product input retains the same exactness failure after moving its output from C[13,2] to C[0,0]. Scalar controls and input snapshots pass; no WMMA performance result is accepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
+| WMMA exactness | The tested products are exact individually in both K slots, while both joint arrangements retain the same residual. Scalar controls and input snapshots pass; no WMMA performance result is accepted. | [Numerical diagnosis and controls](wiki/wmma-exactness.md) |
 | Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
 
 These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.

@@ -147,8 +147,16 @@ Two opposite-order sweeps and three preselected traces yield nine paired primary
 
 [Isolation and relocation evidence](../wiki/wmma-exactness.md#successor-isolation-and-relocation-of-the-two-products) · [All retained input/output words and batches](../data/results/20261008-wmma-witness.json). Primary coverage is 9 logical cases and 18 matrices; auxiliary default/control/prefix regressions add 58 logical cases and 104 matrices, matching prior outputs. Overall: 67 logical cases, 122 matrices and 1,220 batches; scalar 55/55 exact, WMMA 14/67 exact with 813 unequal elements. Exact acceptance remains failed and performance unaccepted. All eight workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
 
+## 2026-10-08: Standalone products and K-slot permutations
+
+Source `7b8ee81` explicitly extends the probe selector with mode 2 for a new six-pattern product contract; older mode 0/1 suites remain closed. Logical M=N=16,K=2 and C00 are fixed. The two product values are tested separately at K0 and K1, then together in both slot assignments. Kernel and launch bodies remain unchanged. The frozen source passed 145 CPU checks, five native builds, 18 input/format refusals and three incompatible-mode refusals.
+
+Two opposite-order six-case sweeps and six preselected traces retain 18 paired observations. All 12 standalone-product WMMA matrices are exact; the six paired WMMA matrices each have one C00 mismatch, always `0xbb800001` instead of `0xbb800000`. All 18 scalar matrices are exact. Other outputs are zero, all snapshots agree and guards remain intact. Complete outputs agree across the tested slots, pair permutations, execution orders and corresponding traces. The exact CPU sum of the observed component values is -1/256, while the joint WMMA value differs by -2^-31. This does not identify an internal accumulation order or hardware cause.
+
+[Component and K-slot evidence](../wiki/wmma-exactness.md#successor-single-products-and-k-slot-permutations) · [All retained words and batches](../data/results/20261008-wmma-products.json). Auxiliary default/control/prefix/witness regressions contribute 61 logical cases and 110 output matrices, all matching prior buffers. Overall: 79 logical cases, 146 matrices, 1,460 batches; scalar 67/67 exact and WMMA 26/79 exact with 813 unequal elements. Correctness remains failed and performance unaccepted. All 12 workers and six profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
 ## Next questions
 
-- Test the isolated C00 products separately, then together in both K orders, under a successor input contract. Preserve physical participation, scalar controls and exact checks. These new combinations have not been measured.
+- Hold product magnitudes and K positions fixed while testing all four sign combinations and matching standalone controls. Preserve the isolated C00 tile, scalar checks and exact oracle. The complete four-sign comparison has not been run; the current `(+12,-13)` condition provides its existing baseline. A sign/cancellation hypothesis is not an established cause.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite. A [logical-prefix successor](#successor-logical-k-prefixes-and-a-two-term-witness) exposes a two-product witness at dense K=2. The later [isolation and relocation control](#successor-isolation-and-relocation-of-the-two-products) preserves that residual with only two nonzero elements per operand, at both C[13,2] and C[0,0].
+In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite. A [logical-prefix successor](#successor-logical-k-prefixes-and-a-two-term-witness) exposes a two-product witness at dense K=2. The later [isolation and relocation control](#successor-isolation-and-relocation-of-the-two-products) preserves that residual with only two nonzero elements per operand, at both C[13,2] and C[0,0]. The [component controls](#successor-single-products-and-k-slot-permutations) then find each product exact in either tested K slot, while both joint arrangements retain the residual.
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
@@ -181,7 +181,40 @@ The [complete witness record](../data/results/20261008-wmma-witness.json) retain
 
 Frozen-source verification passed 136 CPU checks, all four native build modes, 15 input/format negatives and three incompatible-mode negatives. All eight device workers and three profiled applications exited and passed release checks. No result was promoted to open-cake-ir.
 
-A next bounded study can measure the two products separately and then together in both K orders, keeping the isolated C00 setting, physical tile, scalar control and exact oracle. That can test whether the residual already appears in a one-product output or only in the two-product combination. These additional conditions have not been executed here, and the present witness is not claimed to be globally minimal.
+The successor below measures the two products separately and together under both K-slot assignments. The isolation/relocation study itself does not establish those component outcomes or a globally minimal counterexample.
+
+## Successor: single products and K-slot permutations
+
+Source `7b8ee81` adds a separate `product-control` contract. It holds **M=N=16, K=2 and target C[0,0]** fixed for all six conditions, including the one-product cases. The physical tile, full participation, both kernel bodies, launch helpers, scalar control and exact comparison policy remain unchanged. Each positive K case still executes one full source-level K16 WMMA step; reducing the number of nonzero products does not shrink the tile or loop.
+
+The two nonzero operand pairs are inherited unchanged: `(-12/16)*(-1/16)=12/256` and `(1/16)*(-13/16)=-13/256`. A condition places a pair at K0 or K1, or places both pairs in the two available orders. Other input words remain positive zero. The [probe guide](../experiments/wmma/README.md#explicit-individual-product-and-k-slot-suite) records the complete vectors, admission rules and metadata. Probe flag `C550_WMMA_WITNESS=2` selects this new contract; mode 1 remains restricted to the earlier three-pattern witness suite. This is a deliberate probe-interface extension, not an SDK mode or a change to an earlier frozen record.
+
+The plan fixed one six-condition WMMA-first sweep, its reverse with scalar first in a second process, and six separate preselected WMMA-first traces. Each condition has three paired observations, across eight primary processes. All three observations give these C00 words:
+
+| Pattern | Product numerators at K0, K1 | Exact sum | WMMA word | Scalar / reference word |
+| --- | --- | ---: | --- | --- |
+| `positive-k0` | `[12, 0]` | 3/64 | `0x3d400000` | `0x3d400000` |
+| `positive-k1` | `[0, 12]` | 3/64 | `0x3d400000` | `0x3d400000` |
+| `negative-k0` | `[-13, 0]` | -13/256 | `0xbd500000` | `0xbd500000` |
+| `negative-k1` | `[0, -13]` | -13/256 | `0xbd500000` | `0xbd500000` |
+| `pair-forward` | `[12, -13]` | -1/256 | `0xbb800001` | `0xbb800000` |
+| `pair-reversed` | `[-13, 12]` | -1/256 | `0xbb800001` | `0xbb800000` |
+
+The four standalone-product conditions are exact in all **12 WMMA observations**. Both paired conditions fail in all **six WMMA observations**, each with only C00 unequal. All **18 scalar matrices are exact**. Every other primary output is numerically zero, all values are finite, guards are intact, and all **110,592 primary snapshot halfwords** match the prepared inputs and declared packing.
+
+The separately observed component values are 0.046875 and -0.05078125. Their exact rational sum, computed on the CPU for this comparison, is `-1/256`. The joint WMMA result is `-0.003906250465661287`, differing by `-2^-31`. This CPU-derived relation is not a separately measured GPU addition kernel. It shows that the residual occurs in these joint-condition observations even though the corresponding one-product outputs are exact.
+
+Complete buffers match when either standalone product moves between K0 and K1, and when the two nonzero pairs exchange K slots. They also match across the two execution orders and between each trace and its corresponding sweeps. These observations cover the stated values and two slots. A K-slot permutation is an input-placement intervention; it does not reveal the hardware's internal accumulation order or establish general associativity, position independence, or one-product exactness.
+
+Each of the six traces contains 220 actual kernel events: separate 110-event WMMA/scalar groups, each with ten warmups. Resource descriptors remain WMMA block64/28 registers and scalar block256/36 registers, zero shared/private memory, and 110 false recompilation flags per group with none missing. Raw trace units remain unverified. Neither these descriptors nor the retained timings identify the arithmetic cause or support a performance comparison.
+
+The [complete product record](../data/results/20261008-wmma-products.json) retains 18 paired primary cases, 36 output matrices, 9,216 payload values, 4,608 guards, 36,864 prepared halfwords and 360 timing batches. Auxiliary default12, old-control12, prefix34 and witness3 regressions add 61 logical cases and 110 output matrices; their full buffers match the corresponding prior records. Only the new `pair-forward` condition is compared to the prior `isolated-c00` witness as a matching complete input; its six variant outputs also match. Other product conditions are distinct inputs, not historical regressions.
+
+Overall coverage is 79 logical cases, 146 matrices, 37,376 payload values, 18,688 guard words, 161,792 prepared halfwords, 411,648 captured halfwords and 1,460 raw batches. Scalar is exact in all 67 matrices. WMMA has 26 exact matrices out of 79, with 813 unequal elements in the remaining matrices. The aggregate remains `correctness.passed=false` and `performance_accepted=false`; passing standalone conditions do not change the failed paired conditions or authorize performance claims.
+
+Frozen-source validation passed 145 CPU checks, five native build modes, 18 input/format negatives and three incompatible-mode negatives. All 12 device workers and six profiled applications exited and passed release checks. No result was promoted to open-cake-ir.
+
+A next bounded study can hold the two product magnitudes and K positions fixed while testing all four sign combinations, with matching standalone controls. This can test sign-configuration dependence, including cancellation, without assuming its cause. The complete four-sign comparison has not been run; the current `(+12,-13)` condition provides its existing baseline. A separately qualified SDK/compiler comparison would also need its own environment and lifecycle evidence; the current result applies to the recorded MACA 3.5.3.18 route.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

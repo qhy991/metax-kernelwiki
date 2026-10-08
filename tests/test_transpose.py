@@ -42,7 +42,7 @@ class TransposeTest(unittest.TestCase):
             source = words(range(rows * cols))
             matrix = [source[start:start + cols] for start in range(0, len(source), cols)]
             output = guarded(array.array("I", (value for column in zip(*matrix) for value in column)))
-            for variant in probe.VARIANTS:
+            for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS):
                 case = dict(id="matrix", rows=rows, cols=cols, variant=variant)
                 with self.subTest(rows=rows, cols=cols, variant=variant):
                     result = probe.validate_output(case, source, output)
@@ -152,10 +152,75 @@ class TransposeTest(unittest.TestCase):
             subset = [cases[-1], cases[0]]
             self.assertEqual(probe.read_plan(self.write_plan(directory, subset)), subset)
 
+    def test_shared_pitch_suite_has_38_cases_and_equal_source_capacity(self):
+        cases = probe.shared_pitch_cases()
+        self.assertEqual(len(cases), 38)
+        self.assertEqual(probe.VARIANTS, ("direct", "tile64", "tile64_pad1"))
+        self.assertEqual(len(probe.default_cases()), 57)
+        for shape_index, shape in enumerate(probe.SHAPES):
+            group = cases[shape_index * 2:(shape_index + 1) * 2]
+            self.assertEqual([case["variant"] for case in group], ["runtime_pitch64", "runtime_pitch65"])
+            for case, pitch in zip(group, (64, 65)):
+                self.assertEqual((case["rows"], case["cols"]), shape)
+                meta = probe.launch_metadata(case)
+                self.assertEqual(meta["shared_pitch_elements"], pitch)
+                self.assertEqual(meta["padding"], pitch - 64)
+                self.assertEqual(meta["allocated_shared_elements"], 4160)
+                self.assertEqual(meta["intended_static_shared_bytes"], 16640)
+                self.assertEqual((meta["block_x"], meta["block_y"], meta["block_z"]), (64, 4, 1))
+                self.assertEqual(case["warmups"] + case["samples"] * case["launches"], 110)
+        for case in probe.default_cases():
+            meta = probe.launch_metadata(case)
+            self.assertNotIn("shared_pitch_elements", meta)
+            self.assertNotIn("allocated_shared_elements", meta)
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(probe.read_plan(self.write_plan(directory, cases)), cases)
+            subset = [cases[-1], cases[0]]
+            self.assertEqual(probe.read_plan(self.write_plan(directory, subset)), subset)
+
+    def test_runtime_pitches_share_4160_slots_and_preserve_unique_initialized_stores(self):
+        edge_classes = set()
+        for rows, cols in probe.SHAPES:
+            heights = {min(64, rows)} | ({rows % 64} if rows % 64 else set())
+            widths = {min(64, cols)} | ({cols % 64} if cols % 64 else set())
+            edge_classes.update((height, width) for height in heights for width in widths)
+        for height, width in sorted(edge_classes):
+            for pitch in (64, 65):
+                storage = [None] * 4160
+                loaded = set()
+                for ty in range(4):
+                    for tx in range(64):
+                        for offset in range(0, 64, 4):
+                            if tx < width and ty + offset < height:
+                                slot = (ty + offset) * pitch + tx
+                                self.assertLess(slot, len(storage))
+                                self.assertNotIn(slot, loaded)
+                                loaded.add(slot)
+                                storage[slot] = (ty + offset) * width + tx
+                # All 256 modeled threads complete the load phase before any shared read.
+                output = [None] * (height * width)
+                consumed = set()
+                for ty in range(4):
+                    for tx in range(64):
+                        for offset in range(0, 64, 4):
+                            if tx < height and ty + offset < width:
+                                slot = tx * pitch + ty + offset
+                                self.assertLess(slot, len(storage))
+                                self.assertIn(slot, loaded)
+                                self.assertNotIn(slot, consumed)
+                                consumed.add(slot)
+                                output_index = (ty + offset) * height + tx
+                                self.assertIsNone(output[output_index])
+                                output[output_index] = storage[slot]
+                with self.subTest(height=height, width=width, pitch=pitch):
+                    self.assertEqual(loaded, consumed)
+                    self.assertEqual(output, [row * width + col for col in range(width) for row in range(height)])
+
     def test_invalid_shapes_variants_and_timing_are_refused(self):
         base = probe.default_cases()[0]
         for field, value in (("rows", 0), ("cols", -1), ("rows", 1 << 25), ("cols", 66),
-                             ("variant", "tile32"), ("warmups", 20), ("launches", 100)):
+                             ("variant", "tile32"), ("variant", "runtime_pitch63"),
+                             ("variant", "runtime_pitch66"), ("warmups", 20), ("launches", 100)):
             with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises(ValueError):
                     probe.read_plan(self.write_plan(directory, [dict(base, **{field: value})]))
@@ -179,9 +244,32 @@ class TransposeTest(unittest.TestCase):
         ]
 
     def test_actual_shared_size_is_observed_not_forced_to_intended_size(self):
-        for variant in probe.VARIANTS:
+        for variant in (*probe.VARIANTS, *probe.SHARED_PITCH_VARIANTS):
             case, records = self.records(variant)
             self.assertEqual(len(probe.validate_records(records, [case])[case["id"]]), 10)
+
+    def test_shared_pitch_metadata_is_complete_exact_and_separate_from_actual_allocation(self):
+        for variant in probe.SHARED_PITCH_VARIANTS:
+            for field in ("shared_pitch_elements", "allocated_shared_elements", "intended_static_shared_bytes"):
+                for value in (None, True, 0, -1, 63, 66, 4096, 16384, "64", 64.0):
+                    case, records = self.records(variant)
+                    if value is None:
+                        records[2].pop(field)
+                    else:
+                        records[2][field] = value
+                    with self.subTest(variant=variant, field=field, value=value), self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                        probe.validate_records(records, [case])
+            case, records = self.records(variant)
+            records[2]["shared_pitch_elements"] = 65 if variant == "runtime_pitch64" else 64
+            with self.assertRaisesRegex(ValueError, "metadata mismatch"):
+                probe.validate_records(records, [case])
+        first_case, first_records = self.records("runtime_pitch64")
+        second_case, second_records = self.records("runtime_pitch65")
+        first_records[2]["function_attributes_before_timing"]["sharedSizeBytes"] = 16384
+        second_records[2]["function_attributes_before_timing"]["sharedSizeBytes"] = 17000
+        # Runtime attributes remain independent observations even for one source allocation.
+        probe.validate_records(first_records, [first_case])
+        probe.validate_records(second_records, [second_case])
 
     def test_missing_or_invalid_geometry_and_function_metadata_are_refused(self):
         for field in ("rows", "cols", "variant", "grid_x", "grid_y", "grid_z", "block_x", "block_y", "block_z",

@@ -48,6 +48,12 @@ struct Case {
     unsigned warmups = 0, samples = 0, launches = 0;
 };
 
+unsigned runtime_pitch(const Case& c) {
+    if (c.variant == "runtime_pitch64") return 64;
+    if (c.variant == "runtime_pitch65") return 65;
+    return 0;
+}
+
 bool admitted_shape(uint64_t rows, uint64_t cols) {
     return (rows == 1 && (cols == 1 || cols == 65)) || (rows == 65 && cols == 1)
         || (rows == 31 && cols == 33) || (rows == 33 && cols == 31)
@@ -88,7 +94,7 @@ std::vector<Case> read_plan(const std::string& directory) {
             || !admitted_shape(c.rows, c.cols))
             throw std::runtime_error("Shape outside the fixed experiment plan or input capacity");
         c.n = c.rows * c.cols;
-        if (c.variant != "direct" && c.variant != "tile64" && c.variant != "tile64_pad1")
+        if (c.variant != "direct" && c.variant != "tile64" && c.variant != "tile64_pad1" && runtime_pitch(c) == 0)
             throw std::runtime_error("Unknown transpose variant");
         if (c.warmups != 10 || c.samples != 10 || c.launches != 10)
             throw std::runtime_error("Probe fixes 10 warmups and 10 samples of 10 launches");
@@ -126,10 +132,30 @@ __global__ void transpose_tile_kernel(const float* __restrict__ input, float* __
     }
 }
 
+// Both controls call this single non-template kernel with the same source storage capacity.
+__global__ void transpose_runtime_pitch_kernel(const float* __restrict__ input, float* __restrict__ output,
+                                               uint64_t rows, uint64_t cols, unsigned pitch) {
+    __shared__ float storage[64 * 65];
+    const uint64_t input_col = static_cast<uint64_t>(blockIdx.x) * 64 + threadIdx.x;
+    const uint64_t input_row = static_cast<uint64_t>(blockIdx.y) * 64 + threadIdx.y;
+    for (unsigned offset = 0; offset < 64; offset += 4) {
+        if (input_col < cols && input_row + offset < rows)
+            storage[(threadIdx.y + offset) * pitch + threadIdx.x] = input[(input_row + offset) * cols + input_col];
+    }
+    __syncthreads();
+    const uint64_t output_col = static_cast<uint64_t>(blockIdx.y) * 64 + threadIdx.x;
+    const uint64_t output_row = static_cast<uint64_t>(blockIdx.x) * 64 + threadIdx.y;
+    for (unsigned offset = 0; offset < 64; offset += 4) {
+        if (output_col < rows && output_row + offset < cols)
+            output[(output_row + offset) * rows + output_col] = storage[threadIdx.x * pitch + threadIdx.y + offset];
+    }
+}
+
 mcFuncAttributes function_attributes(const Case& c) {
     const void* function = c.variant == "direct" ? reinterpret_cast<const void*>(transpose_direct_kernel)
                          : c.variant == "tile64" ? reinterpret_cast<const void*>(transpose_tile_kernel<64>)
-                         : reinterpret_cast<const void*>(transpose_tile_kernel<65>);
+                         : c.variant == "tile64_pad1" ? reinterpret_cast<const void*>(transpose_tile_kernel<65>)
+                         : reinterpret_cast<const void*>(transpose_runtime_pitch_kernel);
     mcFuncAttributes attributes{};
     MC_CHECK(mcFuncGetAttributes(&attributes, function));
     return attributes;
@@ -141,8 +167,10 @@ void launch(const Case& c, const float* input, float* output) {
         transpose_direct_kernel<<<grid, block>>>(input, output, c.rows, c.cols);
     else if (c.variant == "tile64")
         transpose_tile_kernel<64><<<grid, block>>>(input, output, c.rows, c.cols);
-    else
+    else if (c.variant == "tile64_pad1")
         transpose_tile_kernel<65><<<grid, block>>>(input, output, c.rows, c.cols);
+    else
+        transpose_runtime_pitch_kernel<<<grid, block>>>(input, output, c.rows, c.cols, runtime_pitch(c));
     MC_CHECK(mcGetLastError());
 }
 
@@ -223,15 +251,20 @@ void run(const std::string& input_directory, const std::string& output_directory
         const auto attributes = function_attributes(c);
         const dim3 grid = grid_shape(c), block = block_shape(c);
         const unsigned tile_size = c.variant == "direct" ? 0 : 64;
-        const unsigned padding = c.variant == "tile64_pad1" ? 1 : 0;
+        const unsigned pitch = runtime_pitch(c);
+        const unsigned padding = c.variant == "tile64_pad1" || pitch == 65 ? 1 : 0;
+        const unsigned allocated_shared_elements = pitch ? 64 * 65 : tile_size * (tile_size + padding);
         records << "{\"type\":\"case\",\"id\":" << json_string(c.id)
                 << ",\"rows\":" << c.rows << ",\"cols\":" << c.cols << ",\"n\":" << c.n
                 << ",\"variant\":" << json_string(c.variant)
                 << ",\"block_x\":" << block.x << ",\"block_y\":" << block.y << ",\"block_z\":" << block.z
                 << ",\"grid_x\":" << grid.x << ",\"grid_y\":" << grid.y << ",\"grid_z\":" << grid.z
                 << ",\"tile_rows\":" << tile_size << ",\"tile_cols\":" << tile_size << ",\"padding\":" << padding
-                << ",\"intended_static_shared_bytes\":" << tile_size * (tile_size + padding) * sizeof(float)
-                << ",\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
+                << ",\"intended_static_shared_bytes\":" << allocated_shared_elements * sizeof(float);
+        if (pitch)
+            records << ",\"shared_pitch_elements\":" << pitch
+                    << ",\"allocated_shared_elements\":" << allocated_shared_elements;
+        records << ",\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
                 << ",\"numRegs\":" << attributes.numRegs << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
                 << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}"
                 << ",\"warmups\":" << c.warmups << ",\"samples\":" << c.samples

@@ -46,6 +46,37 @@ a nonnegative actual shared size that differs from the intended source size;
 compiler optimization or allocation behavior is a question for the result.
 Function and device attributes are API observations, not occupancy measurements.
 
+## Shared-pitch control suite
+
+`prepare DIRECTORY --suite shared-pitch` writes a separate 38-case plan: the
+same 19 shapes, each with `runtime_pitch64` and `runtime_pitch65`. The default
+`prepare DIRECTORY` remains the original 57-case, three-variant plan. The TSV,
+transpose oracle, buffers, guards and 10-warmup + 10×10 timing protocol remain
+unchanged. The control plan therefore launches 4,180 kernels in total.
+
+Both new variants call the **same non-template**
+`transpose_runtime_pitch_kernel(rows, cols, pitch)` with runtime pitch 64 or 65.
+Its source declares one fixed `float storage[64*65]`, or 4,160 elements / 16,640
+bytes, for both pitches. It loads `storage[(y+offset)*pitch+x]`, reaches the same
+unconditional full-block barrier, and stores from `storage[x*pitch+y+offset]`.
+The 64×4 block, grid mapping, coordinate guards and transpose semantics match
+the tiled variants. Host admission maps only the two named variants to 64 and
+65; there is no arbitrary pitch input or pitch-specific compiled kernel.
+
+Each new variant records `shared_pitch_elements` (64 or 65),
+`allocated_shared_elements` (4,160) and `intended_static_shared_bytes` (16,640).
+Its `padding` field describes logical row spacing, zero or one. Pitch 64 does
+**not** mean a 16,384-byte source allocation in this suite. Older variants and
+their records need no new fields and remain readable.
+
+This control asks how changing shared row pitch behaves with one source kernel
+and one declared storage capacity. Equal source capacity does not establish
+equal actual shared allocation, register use, emitted instructions, residency
+or hardware behavior. Preserve the per-case runtime attributes even when they
+differ from the intended size or between the two pitches; later compilation,
+device and trace observations must establish those properties. Neither a pitch
+change nor a timing difference alone proves bank conflicts or their removal.
+
 ## Independent CPU oracle and memory
 
 Input `i` is `float32(i)` for `0 <= i < 16,777,216`, giving unique, finite,
@@ -137,6 +168,13 @@ valid shared-memory read has a prior load after the modeled full-block barrier.
 Multi-tile edge cases additionally cover the complete global index sets. This
 checks the algorithm's index and barrier contract; it does not execute compiled
 GPU synchronization or prove MXCC code generation.
+
+For the shared-pitch controls, the CPU model uses the same 4,160-element storage
+capacity for both runtime pitches and checks every admitted local tile edge
+class for in-range unique loads, initialized shared reads, unique stores and
+the independent transpose result. Protocol tests reject absent, mistyped or
+incorrect pitch/capacity metadata, while retaining actual API attributes as
+observations. These checks add no GPU or occupancy evidence.
 
 Python reuses only existing native CPU input validation, binary reading, endian
 checks and input/guard constants. Transpose semantics and its experiment protocol

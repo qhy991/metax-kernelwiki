@@ -26,6 +26,7 @@ SHAPES = ((1, 1), (1, 65), (65, 1), (31, 33), (33, 31),
           *((rows, cols) for rows in (63, 64, 65) for cols in (63, 64, 65)),
           (262144, 64), (65536, 256), (4096, 4096), (262143, 63), (4095, 4097))
 VARIANTS = ("direct", "tile64", "tile64_pad1")
+SHARED_PITCH_VARIANTS = {"runtime_pitch64": 64, "runtime_pitch65": 65}
 COLUMNS = ("id", "rows", "cols", "variant", "warmups", "samples", "launches")
 ENVIRONMENT = ("MACA_LAUNCH_MODE", "MACA_LAUNCH_BLOCKING", "MACA_DIRECT_DISPATCH",
                "MACA_CACHE_PATH", "MACA_CACHE_DISABLE")
@@ -52,18 +53,28 @@ def default_cases() -> list[dict]:
             for rows, cols in SHAPES for variant in VARIANTS]
 
 
+def shared_pitch_cases() -> list[dict]:
+    return [dict(id=f"transpose_r{rows}_c{cols}_{variant}", rows=rows, cols=cols, variant=variant,
+                 warmups=10, samples=10, launches=10)
+            for rows, cols in SHAPES for variant in SHARED_PITCH_VARIANTS]
+
+
 def launch_metadata(case: dict) -> dict:
     rows, cols, variant = case["rows"], case["cols"], case["variant"]
     n = validate_shape(rows, cols)
-    if variant not in VARIANTS:
+    if variant not in VARIANTS and variant not in SHARED_PITCH_VARIANTS:
         raise ValueError("Unknown transpose variant")
     tiled = variant != "direct"
-    padding = int(variant == "tile64_pad1")
-    return dict(n=n, block_x=64 if tiled else 256, block_y=4 if tiled else 1, block_z=1,
-                grid_x=(cols + 63) // 64 if tiled else (n + 255) // 256,
-                grid_y=(rows + 63) // 64 if tiled else 1, grid_z=1,
-                tile_rows=64 if tiled else 0, tile_cols=64 if tiled else 0, padding=padding,
-                intended_static_shared_bytes=64 * (64 + padding) * 4 if tiled else 0)
+    padding = int(variant in ("tile64_pad1", "runtime_pitch65"))
+    result = dict(n=n, block_x=64 if tiled else 256, block_y=4 if tiled else 1, block_z=1,
+                  grid_x=(cols + 63) // 64 if tiled else (n + 255) // 256,
+                  grid_y=(rows + 63) // 64 if tiled else 1, grid_z=1,
+                  tile_rows=64 if tiled else 0, tile_cols=64 if tiled else 0, padding=padding,
+                  intended_static_shared_bytes=64 * (64 + padding) * 4 if tiled else 0)
+    if variant in SHARED_PITCH_VARIANTS:
+        result.update(shared_pitch_elements=SHARED_PITCH_VARIANTS[variant],
+                      allocated_shared_elements=64 * 65, intended_static_shared_bytes=64 * 65 * 4)
+    return result
 
 
 def read_plan(path: Path) -> list[dict]:
@@ -84,7 +95,8 @@ def read_plan(path: Path) -> list[dict]:
             raise ValueError("Invalid or duplicate case id")
         ids.add(key)
         validate_shape(case["rows"], case["cols"])
-        if (case["rows"], case["cols"]) not in SHAPES or case["variant"] not in VARIANTS:
+        if ((case["rows"], case["cols"]) not in SHAPES
+                or (case["variant"] not in VARIANTS and case["variant"] not in SHARED_PITCH_VARIANTS)):
             raise ValueError("Case is outside the fixed experiment plan")
         if (case["warmups"], case["samples"], case["launches"]) != (10, 10, 10):
             raise ValueError("Unsupported launch or timing protocol")
@@ -100,19 +112,21 @@ def oracle_metadata() -> dict:
                 comparison="bitwise equality for every payload element and guard")
 
 
-def prepare(destination: Path) -> dict:
+def prepare(destination: Path, suite: str = "default") -> dict:
     _NATIVE.require_binary32_little_endian()
+    if suite not in ("default", "shared-pitch"):
+        raise ValueError("Unknown preparation suite")
+    cases = default_cases() if suite == "default" else shared_pitch_cases()
     destination.mkdir(parents=True, exist_ok=False)
     with (destination / "input.f32").open("wb") as handle:
         for start in range(0, INPUT_ELEMENTS, 1 << 18):
             array.array("f", range(start, min(start + (1 << 18), INPUT_ELEMENTS))).tofile(handle)
-    cases = default_cases()
     with (destination / "cases.tsv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
     (destination / "oracle.json").write_text(json.dumps(oracle_metadata(), indent=2) + "\n")
-    return dict(prepared=str(destination), cases=len(cases), input_bytes=INPUT_ELEMENTS * 4)
+    return dict(prepared=str(destination), suite=suite, cases=len(cases), input_bytes=INPUT_ELEMENTS * 4)
 
 
 def validate_output(case: dict, source: array.array, output: array.array) -> dict:
@@ -250,13 +264,15 @@ def check(input_directory: Path, output_directory: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("prepare").add_argument("directory", type=Path)
+    preparation = commands.add_parser("prepare")
+    preparation.add_argument("directory", type=Path)
+    preparation.add_argument("--suite", choices=("default", "shared-pitch"), default="default")
     checker = commands.add_parser("check")
     checker.add_argument("input_directory", type=Path)
     checker.add_argument("output_directory", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory) if args.command == "prepare" else check(args.input_directory, args.output_directory)
+        result = prepare(args.directory, args.suite) if args.command == "prepare" else check(args.input_directory, args.output_directory)
         print(json.dumps(result, indent=2, allow_nan=False))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as error:

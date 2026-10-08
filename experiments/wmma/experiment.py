@@ -16,11 +16,19 @@ CONTROL_EXPERIMENT = "wmma-scalar-fp32-input-control"
 PREFIX_EXPERIMENT = "wmma-scalar-fp32-prefix-control"
 PREFIX_SUITE = "prefix-control"
 PREFIX_FAMILIES = {"singleton": 1, "dense": 16}
+WITNESS_EXPERIMENT = "wmma-scalar-fp32-witness-control"
+WITNESS_SUITE = "witness-control"
+WITNESS_PATTERNS = {
+    "dense-origin": (13, 2, "dense-formulas"),
+    "isolated-origin": (13, 2, "isolated-fixed-pairs"),
+    "isolated-c00": (0, 0, "isolated-fixed-pairs"),
+}
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
 COLUMNS = ("id","m","n","k","warmups","samples","launches")
 CONTROL_COLUMNS = ("id","m","n","k","order","warmups","samples","launches")
 PREFIX_COLUMNS = ("id","m","n","k","suite","family","order","warmups","samples","launches")
+WITNESS_COLUMNS = ("id","m","n","k","suite","pattern","target_row","target_col","input_rule","order","warmups","samples","launches")
 ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
 SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
@@ -85,6 +93,95 @@ def read_plan(path: Path, control: bool = False, *, prefix: bool = False) -> lis
         result.append(case)
         ids.add(case["id"])
     return result
+
+
+def validate_witness_case(case: dict) -> None:
+    expected=WITNESS_PATTERNS.get(case.get("pattern"))
+    if (case.get("suite")!=WITNESS_SUITE or expected is None
+            or any(type(case.get(field)) is not int for field in ("m","n","k","target_row","target_col"))
+            or (case["m"],case["n"],case["k"])!=(16,16,2)
+            or (case["target_row"],case["target_col"],case.get("input_rule"))!=expected):
+        raise ValueError("Shape, pattern, target or input rule outside the fixed WMMA witness cases")
+
+
+def witness_cases(order: str = "wmma-first") -> list[dict]:
+    if order not in ORDERS:
+        raise ValueError("Unknown WMMA/scalar variant order")
+    return [dict(id="witness_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=WITNESS_SUITE,
+                 pattern=pattern,target_row=row,target_col=col,input_rule=rule,order=order,
+                 warmups=10,samples=10,launches=10)
+            for pattern,(row,col,rule) in WITNESS_PATTERNS.items()]
+
+
+def read_witness_plan(path: Path) -> list[dict]:
+    with path.open(newline="") as handle:
+        reader=csv.DictReader(handle,delimiter="\t")
+        if tuple(reader.fieldnames or ())!=WITNESS_COLUMNS:
+            raise ValueError("Unsupported witness cases.tsv header")
+        rows=list(reader)
+    if not 1<=len(rows)<=3:
+        raise ValueError("A witness plan must contain 1 to 3 cases")
+    cases,ids,patterns=[],set(),set()
+    text_fields={"id","suite","pattern","input_rule","order"}
+    for row in rows:
+        if None in row or any(row[field] is None for field in WITNESS_COLUMNS):
+            raise ValueError("Malformed witness case row")
+        case={field:row[field] if field in text_fields else int(row[field]) for field in WITNESS_COLUMNS}
+        if (not case["id"] or case["id"] in ids
+                or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for ch in case["id"])):
+            raise ValueError("Invalid or duplicate case id")
+        validate_witness_case(case)
+        if case["pattern"] in patterns:
+            raise ValueError("Duplicate witness pattern")
+        if case["order"] not in ORDERS:
+            raise ValueError("Unknown WMMA/scalar variant order")
+        if (case["warmups"],case["samples"],case["launches"])!=(10,10,10):
+            raise ValueError("Unsupported timing protocol")
+        ids.add(case["id"]);patterns.add(case["pattern"]);cases.append(case)
+    return cases
+
+
+def witness_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
+    validate_witness_case(case)
+    a,b=[0]*OPERAND_HALFWORDS,[0]*OPERAND_HALFWORDS
+    for outer in range(16):
+        for k in range(2):
+            if case["pattern"]=="dense-origin":
+                an,bn=a_numerator(outer,k),b_numerator(k,outer)
+            else:
+                an=(-12,1)[k] if outer==case["target_row"] else 0
+                bn=(-1,-13)[k] if outer==case["target_col"] else 0
+            a[outer*16+k]=halfword(an)
+            b[outer*16+k]=halfword(bn)
+    return a,b
+
+
+def validate_witness_inputs(case: dict, a: list[int], b: list[int]) -> dict:
+    expected=witness_packed_inputs(case)
+    for label,actual,want in (("A",a,expected[0]),("B",b,expected[1])):
+        if len(actual)!=1024 or actual!=want:
+            raise ValueError(f"{case['id']}: packed witness {label} input words differ from the contract")
+    masked=0 if case["pattern"]=="dense-origin" else 30
+    return dict(input_halfwords_checked=2048,a_padding_halfwords_checked=992,b_padding_halfwords_checked=992,
+                a_pattern_masked_halfwords_checked=masked,b_pattern_masked_halfwords_checked=masked)
+
+
+def witness_reference_output(case: dict) -> list[float]:
+    """Logical integer oracle, independent of packed slots and either device kernel."""
+    validate_witness_case(case)
+    result=[0.0]*256
+    if case["pattern"]=="dense-origin":
+        for i in range(16):
+            for j in range(16):
+                result[i*16+j]=sum(a_numerator(i,k)*b_numerator(k,j) for k in range(2))/256
+    else:
+        result[case["target_row"]*16+case["target_col"]]=((-12)*(-1)+1*(-13))/256
+    return result
+
+
+def witness_pattern_contracts() -> list[dict]:
+    return [dict(pattern=pattern,target_row=row,target_col=col,input_rule=rule)
+            for pattern,(row,col,rule) in WITNESS_PATTERNS.items()]
 
 
 def halfword(numerator: int) -> int:
@@ -164,7 +261,9 @@ def oracle_metadata() -> dict:
                 accumulator_prefix_numerator_bound=13440,guard_elements_each_side=64,guard_uint32=GUARD_VALUE)
 
 
-def control_oracle_metadata(*, prefix: bool = False) -> dict:
+def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -> dict:
+    if suite is not None and (suite!=WITNESS_SUITE or prefix):
+        raise ValueError("Unknown or incompatible paired control suite")
     result = {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
             "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
             "input_policy": "one A/B H2D per logical case; same allocations and no rewrite between variants",
@@ -176,6 +275,17 @@ def control_oracle_metadata(*, prefix: bool = False) -> dict:
                       families={family:dict(m=side,n=side,k_inclusive=[0,16]) for family,side in PREFIX_FAMILIES.items()},
                       maximum_cases=34,
                       prefix_scope="logical M=N=1 or16 and K0..16; unchanged physical16x16 tile and full participation")
+    if suite==WITNESS_SUITE:
+        result.pop("a_rule");result.pop("b_rule")
+        result.update(experiment=WITNESS_EXPERIMENT,suite=WITNESS_SUITE,patterns=witness_pattern_contracts(),
+                      logical_shape=[16,16,2],maximum_cases=3,
+                      dense_a_rule="A_num(i,k)=((67*i+13*k)%31)-15",
+                      dense_b_rule="B_num(k,j)=((17*k+5*j+3)%29)-14",
+                      isolated_a_numerators=[-12,1],isolated_b_numerators=[-1,-13],
+                      isolated_rule="only declared A target_row and B target_col retain the ordered pairs at k0,k1; all other input words are positive zero",
+                      target_reference_numerator=-1,target_reference_denominator=256,
+                      reference="dense: independent logical integer dot/256; isolated: only declared target cell is -1/256",
+                      target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping")
     return result
 
 
@@ -194,31 +304,63 @@ def prefix_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
-    if suite not in ("default","scalar-control",PREFIX_SUITE) or (suite=="default" and order is not None):
+    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE) or (suite=="default" and order is not None):
         raise ValueError("Order is only supported by paired control suites")
     prefix = suite==PREFIX_SUITE
+    witness = suite==WITNESS_SUITE
     control = suite!="default"
-    cases = prefix_cases(order or "wmma-first") if prefix else control_cases(order or "wmma-first") if control else default_cases()
+    cases = witness_cases(order or "wmma-first") if witness else prefix_cases(order or "wmma-first") if prefix else control_cases(order or "wmma-first") if control else default_cases()
     destination.mkdir(parents=True,exist_ok=False)
     for case in cases:
-        a,b = packed_inputs(case,prefix=prefix)
+        a,b = witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        writer=csv.DictWriter(handle,fieldnames=PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS,delimiter="\t",lineterminator="\n")
+        columns=WITNESS_COLUMNS if witness else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
+        writer=csv.DictWriter(handle,fieldnames=columns,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
-    (destination/"oracle.json").write_text(json.dumps(control_oracle_metadata(prefix=prefix) if control else oracle_metadata(),indent=2)+"\n")
+    metadata=control_oracle_metadata(prefix=prefix,suite=WITNESS_SUITE if witness else None) if control else oracle_metadata()
+    (destination/"oracle.json").write_text(json.dumps(metadata,indent=2)+"\n")
     result = dict(prepared=str(destination),cases=len(cases),input_bytes_per_case=4096)
     if prefix:
         result.update(suite=PREFIX_SUITE,families=list(PREFIX_FAMILIES))
+    if witness:
+        result.update(suite=WITNESS_SUITE,patterns=list(WITNESS_PATTERNS))
     return result
 
 
-def case_metadata(case: dict, variant: str | None = None, *, prefix: bool = False) -> dict:
-    validate_case(case,prefix=prefix)
+def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None = None) -> None:
+    if suite is not None:
+        if suite!=WITNESS_SUITE or prefix:
+            raise ValueError("Unknown or incompatible paired control suite")
+        validate_witness_case(case)
+    else:
+        validate_case(case,prefix=prefix)
+
+
+def witness_case_fields(case: dict) -> dict:
+    validate_witness_case(case)
+    return {field:case[field] for field in ("suite","pattern","target_row","target_col","input_rule")}
+
+
+def witness_protocol_metadata() -> dict:
+    return dict(witness_mode=1,suite=WITNESS_SUITE,witness_patterns=witness_pattern_contracts(),
+                logical_shape=[16,16,2],maximum_cases=3,
+                dense_a_rule="A_num(i,k)=((67*i+13*k)%31)-15",
+                dense_b_rule="B_num(k,j)=((17*k+5*j+3)%29)-14",
+                isolated_a_numerators=[-12,1],isolated_b_numerators=[-1,-13],
+                input_scale_denominator=16,
+                isolated_rule="only declared A target_row and B target_col retain the ordered pairs at k0,k1; all other input words are positive zero",
+                target_reference_numerator=-1,target_reference_denominator=256)
+
+
+def case_metadata(case: dict, variant: str | None = None, *, prefix: bool = False, suite: str | None = None) -> dict:
+    validate_control_case(case,prefix=prefix,suite=suite)
     if prefix and variant is None:
         raise ValueError("Prefix metadata requires an explicit paired variant")
+    if suite is not None and variant is None:
+        raise ValueError("Witness metadata requires an explicit paired variant")
     result = dict(m=case["m"],n=case["n"],k=case["k"],tile_m=16,tile_n=16,tile_k=16,
                 k_chunks=(case["k"]+15)//16,packed_chunks=4,a_layout="row_major",b_layout="col_major",c_layout="row_major",
                 leading_dimension=16,operand_dtype="float16",accumulator_dtype="float32",output_elements=256,
@@ -235,6 +377,8 @@ def case_metadata(case: dict, variant: str | None = None, *, prefix: bool = Fals
                           participation="one thread per C element; full padded K chunks")
     if prefix:
         result.update(suite=PREFIX_SUITE,family=case["family"])
+    if suite==WITNESS_SUITE:
+        result.update(witness_case_fields(case))
     return result
 
 
@@ -316,7 +460,7 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[di
     return samples
 
 
-def snapshot_metadata(case: dict, phase: str, *, prefix: bool = False) -> dict:
+def snapshot_metadata(case: dict, phase: str, *, prefix: bool = False, suite: str | None = None) -> dict:
     if phase not in SNAPSHOT_PHASES:
         raise ValueError("Unknown input snapshot phase")
     result = dict(phase=phase,order=case["order"],operand_halfwords_each=1024,
@@ -324,11 +468,15 @@ def snapshot_metadata(case: dict, phase: str, *, prefix: bool = False) -> dict:
     if prefix:
         validate_case(case,prefix=True)
         result.update(suite=PREFIX_SUITE,family=case["family"])
+    if suite is not None:
+        validate_control_case(case,prefix=prefix,suite=suite)
+        result.update(witness_case_fields(case))
     return result
 
 
-def validate_control_records(records: list[dict], cases: list[dict], *, prefix: bool = False) -> dict:
-    validate_record_header(records,cases,PREFIX_EXPERIMENT if prefix else CONTROL_EXPERIMENT)
+def validate_control_records(records: list[dict], cases: list[dict], *, prefix: bool = False, suite: str | None = None) -> dict:
+    experiment=control_oracle_metadata(prefix=prefix,suite=suite)["experiment"]
+    validate_record_header(records,cases,experiment)
     if records[0].get("type")!="device" or records[1].get("type")!="protocol":
         raise ValueError("Control device/protocol records must precede logical cases")
     protocol=records[1]
@@ -337,6 +485,10 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
                                 prefix_k_min=0,prefix_k_max=16,maximum_cases=34).items():
             if type(protocol.get(field)) is not type(value) or protocol[field]!=value:
                 raise ValueError(f"Prefix protocol metadata mismatch: {field}")
+    if suite==WITNESS_SUITE:
+        for field,value in witness_protocol_metadata().items():
+            if json.dumps(protocol.get(field),sort_keys=True,allow_nan=False)!=json.dumps(value,sort_keys=True):
+                raise ValueError(f"Witness protocol metadata mismatch: {field}")
     for field,value in dict(control_mode=1,variants_per_case=2,input_snapshots=list(SNAPSHOT_PHASES),
                             input_rewrite_between_variants=False,purpose="correctness_diagnostic",performance_accepted=False).items():
         if type(protocol.get(field)) is not type(value) or protocol[field]!=value:
@@ -357,17 +509,20 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
         return row
     result={}
     for case in cases:
-        validate_case(case,prefix=prefix)
+        validate_control_case(case,prefix=prefix,suite=suite)
         if case.get("order") not in ORDERS:
             raise ValueError("Unknown WMMA/scalar variant order")
         fields=("m","n","k","suite","family","order") if prefix else ("m","n","k","order")
-        take("logical_case",case,{field:case[field] for field in fields})
-        snapshots={"before":take("input_snapshot",case,snapshot_metadata(case,"before",prefix=prefix))}
+        logical={field:case[field] for field in fields}
+        if suite==WITNESS_SUITE:
+            logical.update(witness_case_fields(case))
+        take("logical_case",case,logical)
+        snapshots={"before":take("input_snapshot",case,snapshot_metadata(case,"before",prefix=prefix,suite=suite))}
         variants={}
         for index,variant in enumerate(ORDERS[case["order"]]):
             if index:
-                snapshots["between"]=take("input_snapshot",case,snapshot_metadata(case,"between",prefix=prefix))
-            declaration=take("case",case,case_metadata(case,variant,prefix=prefix))
+                snapshots["between"]=take("input_snapshot",case,snapshot_metadata(case,"between",prefix=prefix,suite=suite))
+            declaration=take("case",case,case_metadata(case,variant,prefix=prefix,suite=suite))
             validate_resources(declaration)
             samples=[]
             for sample in range(10):
@@ -378,17 +533,18 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
                         raise ValueError(f"Invalid control timing: {field}")
                 samples.append(row)
             variants[variant]=dict(declaration=declaration,samples=samples)
-        snapshots["after"]=take("input_snapshot",case,snapshot_metadata(case,"after",prefix=prefix))
+        snapshots["after"]=take("input_snapshot",case,snapshot_metadata(case,"after",prefix=prefix,suite=suite))
         result[case["id"]]=dict(variants=variants,snapshots=snapshots)
     if position!=len(records)-1:
         raise ValueError("Unexpected trailing control records")
     return result
 
 
-def analyze_control_output(case: dict, words: list[int], *, prefix: bool = False) -> dict:
+def analyze_control_output(case: dict, words: list[int], *, prefix: bool = False, suite: str | None = None) -> dict:
     if len(words)!=384:
         raise ValueError("Incorrect control output extent")
-    expected=reference_output(case,prefix=prefix)
+    validate_control_case(case,prefix=prefix,suite=suite)
+    expected=witness_reference_output(case) if suite==WITNESS_SUITE else reference_output(case,prefix=prefix)
     values=struct.unpack("<256f",struct.pack("<256I",*words[64:-64]))
     mismatches=[]
     for index,(observed,want) in enumerate(zip(values,expected)):
@@ -406,22 +562,27 @@ def analyze_control_output(case: dict, words: list[int], *, prefix: bool = False
                 guard_elements_checked=128,guard_mismatches=guard_mismatches)
 
 
-def check_control(input_directory: Path, output_directory: Path, *, prefix: bool = False) -> dict:
-    if json.dumps(json.loads((input_directory/"oracle.json").read_text()),sort_keys=True,allow_nan=False) != json.dumps(control_oracle_metadata(prefix=prefix),sort_keys=True):
+def check_control(input_directory: Path, output_directory: Path, *, prefix: bool = False, suite: str | None = None) -> dict:
+    metadata=control_oracle_metadata(prefix=prefix,suite=suite)
+    if json.dumps(json.loads((input_directory/"oracle.json").read_text()),sort_keys=True,allow_nan=False) != json.dumps(metadata,sort_keys=True):
         raise ValueError("Unsupported control oracle metadata")
-    cases=read_plan(input_directory/"cases.tsv",control=True,prefix=prefix)
+    witness=suite==WITNESS_SUITE
+    cases=read_witness_plan(input_directory/"cases.tsv") if witness else read_plan(input_directory/"cases.tsv",control=True,prefix=prefix)
     prepared={}
     for case in cases:
         a=read_words(input_directory/f"{case['id']}.a.f16",1024,2)
         b=read_words(input_directory/f"{case['id']}.b.f16",1024,2)
-        validate_inputs(case,a,b,prefix=prefix)
+        if witness:
+            validate_witness_inputs(case,a,b)
+        else:
+            validate_inputs(case,a,b,prefix=prefix)
         prepared[case["id"]]=(a,b)
     records=[json.loads(line) for line in (output_directory/"raw.jsonl").read_text().splitlines()]
-    indexed=validate_control_records(records,cases,prefix=prefix)
+    indexed=validate_control_records(records,cases,prefix=prefix,suite=suite)
     summaries=[]
     for case in cases:
         retained=indexed[case["id"]]
-        fixed=packed_inputs(case,prefix=prefix)
+        fixed=witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
         snapshots={}
         for phase,snapshot in retained["snapshots"].items():
             operands={}
@@ -435,11 +596,13 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
                                        fixed_packing_mismatch_indices=contract_differences,
                                        file=snapshot[operand+"_file"])
             snapshots[phase]=dict(equal_to_prepared=all(row["equal_to_prepared"] for row in operands.values()),operands=operands)
+            if witness:
+                snapshots[phase].update(witness_case_fields(case),phase=phase,order=case["order"])
         variants={}
         for variant,data in retained["variants"].items():
             declaration=data["declaration"]
             words=read_words(output_directory/declaration["output_file"],384,4)
-            row={**case_metadata(case,variant,prefix=prefix),**analyze_control_output(case,words,prefix=prefix)}
+            row={**case_metadata(case,variant,prefix=prefix,suite=suite),**analyze_control_output(case,words,prefix=prefix,suite=suite)}
             for field in ("function_attributes_before_timing","pointer_alignment_observed_bytes"):
                 row[field]=declaration[field]
             timings=[sample["event_batch_ms"]*1000/10 for sample in data["samples"]]
@@ -452,9 +615,11 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
                      input_snapshots=snapshots,inputs_unchanged=inputs_equal,variants=variants,passed=passed)
         if prefix:
             summary.update(suite=PREFIX_SUITE,family=case["family"])
+        if witness:
+            summary.update(witness_case_fields(case))
         summaries.append(summary)
     passed=all(row["passed"] for row in summaries)
-    result = dict(status="pass" if passed else "diagnostic_failed",experiment=PREFIX_EXPERIMENT if prefix else CONTROL_EXPERIMENT,
+    result = dict(status="pass" if passed else "diagnostic_failed",experiment=metadata["experiment"],
                 structural_valid=True,passed=passed,purpose="correctness_diagnostic",performance_accepted=False,
                 logical_cases_checked=len(cases),variant_outputs_checked=2*len(cases),
                 prepared_input_halfwords_checked=2*1024*len(cases),input_snapshot_halfwords_checked=6*1024*len(cases),
@@ -464,11 +629,15 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
                 timing_scope="descriptive per-variant batches; no speedup or performance acceptance")
     if prefix:
         result.update(suite=PREFIX_SUITE,families=list(PREFIX_FAMILIES),maximum_cases=34)
+    if witness:
+        result.update(suite=WITNESS_SUITE,patterns=witness_pattern_contracts(),maximum_cases=3)
     return result
 
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata(suite=WITNESS_SUITE):
+        return check_control(input_directory,output_directory,suite=WITNESS_SUITE)
     if oracle==control_oracle_metadata(prefix=True):
         return check_control(input_directory,output_directory,prefix=True)
     if oracle==control_oracle_metadata():
@@ -505,7 +674,7 @@ def main() -> int:
     commands=parser.add_subparsers(dest="command",required=True)
     preparation=commands.add_parser("prepare")
     preparation.add_argument("directory",type=Path)
-    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE),default="default")
+    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE),default="default")
     preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)

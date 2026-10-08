@@ -31,12 +31,22 @@
 #if C550_WMMA_PREFIX && !C550_WMMA_CONTROL
 #error "C550_WMMA_PREFIX requires paired scalar control"
 #endif
+#ifndef C550_WMMA_WITNESS
+#define C550_WMMA_WITNESS 0
+#endif
+#if C550_WMMA_WITNESS != 0 && C550_WMMA_WITNESS != 1
+#error "C550_WMMA_WITNESS must be 0 or 1"
+#endif
+#if C550_WMMA_WITNESS && (!C550_WMMA_CONTROL || C550_WMMA_PREFIX)
+#error "C550_WMMA_WITNESS requires C550_WMMA_CONTROL=1 and C550_WMMA_PREFIX=0"
+#endif
 
 namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
-constexpr const char* kExperiment = C550_WMMA_PREFIX ? "wmma-scalar-fp32-prefix-control"
+constexpr const char* kExperiment = C550_WMMA_WITNESS ? "wmma-scalar-fp32-witness-control"
+                                 : C550_WMMA_PREFIX ? "wmma-scalar-fp32-prefix-control"
                                  : C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
 
@@ -72,12 +82,25 @@ struct Case {
 #if C550_WMMA_PREFIX
     std::string suite, family;
 #endif
+#if C550_WMMA_WITNESS
+    std::string suite, pattern, input_rule;
+    unsigned target_row = 0, target_col = 0;
+#endif
     unsigned m = 0, n = 0, k = 0, warmups = 0, samples = 0, launches = 0;
     std::vector<uint16_t> a, b;
 };
 
 bool admitted_shape(const Case& c) {
-#if C550_WMMA_PREFIX
+#if C550_WMMA_WITNESS
+    if (c.suite != "witness-control" || c.m != 16 || c.n != 16 || c.k != 2) return false;
+    if (c.pattern == "dense-origin")
+        return c.target_row == 13 && c.target_col == 2 && c.input_rule == "dense-formulas";
+    if (c.pattern == "isolated-origin")
+        return c.target_row == 13 && c.target_col == 2 && c.input_rule == "isolated-fixed-pairs";
+    if (c.pattern == "isolated-c00")
+        return c.target_row == 0 && c.target_col == 0 && c.input_rule == "isolated-fixed-pairs";
+    return false;
+#elif C550_WMMA_PREFIX
     return c.suite == "prefix-control" && c.k <= 16
         && ((c.family == "singleton" && c.m == 1 && c.n == 1)
             || (c.family == "dense" && c.m == 16 && c.n == 16));
@@ -89,6 +112,14 @@ bool admitted_shape(const Case& c) {
     return false;
 #endif
 }
+
+#if C550_WMMA_WITNESS
+void witness_fields(std::ostream& records, const Case& c) {
+    records << ",\"suite\":" << json_string(c.suite) << ",\"pattern\":" << json_string(c.pattern)
+            << ",\"target_row\":" << c.target_row << ",\"target_col\":" << c.target_col
+            << ",\"input_rule\":" << json_string(c.input_rule);
+}
+#endif
 
 uint16_t sixteenth_bits(int numerator) {
     // Exact normal half encoding for this contract's integer numerators in [-15,15].
@@ -115,8 +146,15 @@ void validate_inputs(const Case& c) {
             for (unsigned inner = 0; inner < 16; ++inner) {
                 const unsigned k = chunk * 16 + inner;
                 const unsigned index = chunk * 256 + outer * 16 + inner;
-                const int a_num = outer < c.m && k < c.k ? static_cast<int>((67 * outer + 13 * k) % 31) - 15 : 0;
-                const int b_num = outer < c.n && k < c.k ? static_cast<int>((17 * k + 5 * outer + 3) % 29) - 14 : 0;
+                int a_num = outer < c.m && k < c.k ? static_cast<int>((67 * outer + 13 * k) % 31) - 15 : 0;
+                int b_num = outer < c.n && k < c.k ? static_cast<int>((17 * k + 5 * outer + 3) % 29) - 14 : 0;
+#if C550_WMMA_WITNESS
+                if (c.pattern != "dense-origin") {
+                    const int a_pair[] = {-12, 1}, b_pair[] = {-1, -13};
+                    a_num = outer == c.target_row && k < 2 ? a_pair[k] : 0;
+                    b_num = outer == c.target_col && k < 2 ? b_pair[k] : 0;
+                }
+#endif
                 if (c.a[index] != sixteenth_bits(a_num) || c.b[index] != sixteenth_bits(b_num))
                     throw std::runtime_error("Packed input words differ from the declared A-row/B-column contract");
             }
@@ -127,18 +165,26 @@ void validate_inputs(const Case& c) {
 std::vector<Case> read_plan(const std::string& directory) {
     std::ifstream file(directory + "/cases.tsv");
     std::string line;
-    const char* header = C550_WMMA_PREFIX ? "id\tm\tn\tk\tsuite\tfamily\torder\twarmups\tsamples\tlaunches"
+    const char* header = C550_WMMA_WITNESS ? "id\tm\tn\tk\tsuite\tpattern\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
+                        : C550_WMMA_PREFIX ? "id\tm\tn\tk\tsuite\tfamily\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_CONTROL ? "id\tm\tn\tk\torder\twarmups\tsamples\tlaunches"
                                          : "id\tm\tn\tk\twarmups\tsamples\tlaunches";
     if (!file || !std::getline(file, line) || line != header)
         throw std::runtime_error("Unsupported or missing cases.tsv");
     std::vector<Case> cases;
     while (std::getline(file, line)) {
+#if C550_WMMA_WITNESS
+        if (cases.size() >= 3) throw std::runtime_error("Maximum 3 witness cases");
+#endif
         std::istringstream row(line);
         Case c;
         std::string trailing;
 #if C550_WMMA_CONTROL
-#if C550_WMMA_PREFIX
+#if C550_WMMA_WITNESS
+        if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.target_row >> c.target_col
+                  >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
+            throw std::runtime_error("Invalid witness-control case row");
+#elif C550_WMMA_PREFIX
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.family >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid prefix-control case row");
 #else
@@ -153,9 +199,14 @@ std::vector<Case> read_plan(const std::string& directory) {
 #endif
         if (c.id.empty() || c.id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != std::string::npos)
             throw std::runtime_error("Unsafe case id");
-        for (const auto& old : cases)
+        for (const auto& old : cases) {
             if (old.id == c.id) throw std::runtime_error("Duplicate case id");
-        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_PREFIX
+#if C550_WMMA_WITNESS
+            if (old.pattern == c.pattern) throw std::runtime_error("Duplicate witness pattern");
+#endif
+        }
+        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS
+            ? "Shape, pattern, target or input rule outside the fixed WMMA witness cases" : C550_WMMA_PREFIX
             ? "Shape, suite or family outside the fixed WMMA prefix cases"
             : "Shape outside the fixed WMMA boundary cases");
         if (c.warmups != 10 || c.samples != 10 || c.launches != 10)
@@ -164,8 +215,10 @@ std::vector<Case> read_plan(const std::string& directory) {
         c.b = read_operand(directory + "/" + c.id + ".b.f16");
         validate_inputs(c);
         cases.push_back(std::move(c));
+#if !C550_WMMA_WITNESS
         if (cases.size() > (C550_WMMA_PREFIX ? 34U : 12U))
             throw std::runtime_error(C550_WMMA_PREFIX ? "Maximum 34 prefix cases" : "Maximum 12 cases");
+#endif
     }
     if (!file.eof() || cases.empty()) throw std::runtime_error("Invalid or empty plan");
     return cases;
@@ -236,6 +289,9 @@ void retain_inputs(const Case& c, const char* phase, const __half* a, const __ha
 #if C550_WMMA_PREFIX
     records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
 #endif
+#if C550_WMMA_WITNESS
+    witness_fields(records, c);
+#endif
     records << ",\"operand_halfwords_each\":1024,\"a_file\":" << json_string(c.id + "." + phase + ".a.f16")
             << ",\"b_file\":" << json_string(c.id + "." + phase + ".b.f16") << "}\n";
     records.flush();
@@ -303,6 +359,18 @@ void run(const std::string& input_directory, const std::string& output_directory
     records << ",\"prefix_mode\":1,\"suite\":\"prefix-control\",\"prefix_families\":[\"singleton\",\"dense\"],"
                "\"prefix_k_min\":0,\"prefix_k_max\":16,\"maximum_cases\":34";
 #endif
+#if C550_WMMA_WITNESS
+    records << ",\"witness_mode\":1,\"suite\":\"witness-control\",\"witness_patterns\":["
+               "{\"pattern\":\"dense-origin\",\"target_row\":13,\"target_col\":2,\"input_rule\":\"dense-formulas\"},"
+               "{\"pattern\":\"isolated-origin\",\"target_row\":13,\"target_col\":2,\"input_rule\":\"isolated-fixed-pairs\"},"
+               "{\"pattern\":\"isolated-c00\",\"target_row\":0,\"target_col\":0,\"input_rule\":\"isolated-fixed-pairs\"}],"
+               "\"logical_shape\":[16,16,2],\"maximum_cases\":3,"
+               "\"dense_a_rule\":\"A_num(i,k)=((67*i+13*k)%31)-15\","
+               "\"dense_b_rule\":\"B_num(k,j)=((17*k+5*j+3)%29)-14\","
+               "\"isolated_a_numerators\":[-12,1],\"isolated_b_numerators\":[-1,-13],\"input_scale_denominator\":16,"
+               "\"isolated_rule\":\"only declared A target_row and B target_col retain the ordered pairs at k0,k1; all other input words are positive zero\","
+               "\"target_reference_numerator\":-1,\"target_reference_denominator\":256";
+#endif
     records << "}\n";
     records.flush();
     __half *device_a = nullptr, *device_b = nullptr;
@@ -325,6 +393,9 @@ void run(const std::string& input_directory, const std::string& output_directory
                 << ",\"order\":" << json_string(c.order);
 #if C550_WMMA_PREFIX
         records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
+#endif
+#if C550_WMMA_WITNESS
+        witness_fields(records, c);
 #endif
         records << "}\n";
         retain_inputs(c, "before", device_a, device_b, output_directory, records);
@@ -373,6 +444,9 @@ void run(const std::string& input_directory, const std::string& output_directory
 #endif
 #if C550_WMMA_PREFIX
             records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
+#endif
+#if C550_WMMA_WITNESS
+            witness_fields(records, c);
 #endif
             records << "}\n";
             records.flush();

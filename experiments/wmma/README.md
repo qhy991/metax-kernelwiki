@@ -332,3 +332,79 @@ claiming such a minimum. Prior failed records remain unchanged.
 compile flags, both orders, complete failed-diagnostic reporting, old-parser
 refusal of the new header, and the unchanged C[0,0] input/reference relationship.
 These CPU checks do not establish any device outcome for the prefix suite.
+
+## Explicit two-term witness suite
+
+`prepare --suite witness-control` declares three input patterns at the same
+logical shape `M=N=16, K=2`. The physical tile remains 16×16, the input files
+still contain four packed K chunks, and each kernel executes one full padded
+K16 chunk. The WMMA and scalar kernel bodies are unchanged in this successor
+source; this is not a claim that separate builds produce identical binaries.
+
+| Pattern | Target coordinate | A and B input rule |
+| --- | --- | --- |
+| `dense-origin` | `(13,2)` | Original numerator formulas in all logical rows and columns. |
+| `isolated-origin` | `(13,2)` | Only A row 13 and B column 2 retain the ordered pairs below. |
+| `isolated-c00` | `(0,0)` | Relocate those same ordered pairs to A row 0 and B column 0. |
+
+The isolated A pair is `[-12, 1]/16` at K positions 0 and 1; the B pair is
+`[-1, -13]/16` in the same order. Every other isolated input word is positive
+zero, including unrelated logical rows and columns, K padding and unused
+packed chunks. The isolated reference therefore has one nonzero output, at
+its declared target:
+
+`((-12)*(-1) + 1*(-13))/256 = -1/256`.
+
+The dense reference still evaluates the original independent integer dot
+product at every output coordinate. Its `(13,2)` value is also `-1/256`.
+The target denotes logical matrix coordinates, not a hardware lane or fragment
+mapping. Reversing both pairs would leave their mathematical dot product
+unchanged, but it changes this declared input experiment and is rejected by
+full packed-word validation.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-witness-input \
+  --suite witness-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=1 \
+  bash experiments/wmma/compile.sh /tmp/wmma-witness-probe
+```
+
+`C550_WMMA_WITNESS` defaults to zero and accepts only `0` or `1`. Enabling it
+requires paired control and disables prefix mode; the compile script and source
+reject incompatible flags. Its exact TSV columns are
+`id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
+(tab-separated). The suite must be `witness-control`. The input-rule identifiers
+are `dense-formulas` and `isolated-fixed-pairs`; each pattern fixes its rule and
+target coordinate. Both kernel orders are supported. A plan contains one to
+three distinct patterns; an explicit subset can support a trace. A fourth row
+is refused before reading its inputs. Default, old scalar-control and prefix
+headers remain separate and retain their own admission rules.
+
+The oracle and raw protocol use experiment
+`wmma-scalar-fp32-witness-control`. They record the patterns, targets, input
+rules, fixed isolated pairs and scale. Each logical-case, variant and snapshot
+record binds `suite`, `pattern`, `target_row`, `target_col` and `input_rule` to
+its case ID and declared order. Snapshot phases and filenames keep the paired
+control format. Preparation, initial H2D transfer, three complete A/B readbacks,
+separate guarded outputs, exact finite checks and signed-zero equivalence all
+retain the existing contract. No input rewrite occurs between variants.
+
+One complete three-pattern order checks 1,536 payload words, 768 guard words,
+6,144 prepared input halfwords and 18,432 snapshot halfwords. It retains 60 timed
+batches and executes 660 kernel launches including warmups. A single paired
+trace still has two distinct 110-event groups, each with ten warmups. Timings
+remain descriptive, and `performance_accepted` remains false regardless of
+numerical outcomes.
+
+This suite observes the response to removing unrelated rows and columns and
+to relocating the same ordered pair. It does not establish a global minimum
+counterexample, an internal WMMA accumulation order, a physical lane mapping,
+or a hardware-versus-compiler cause. A subset establishes no complete pattern
+coverage. Earlier failed records and exact oracles remain unchanged.
+
+`tests/test_wmma_witness.py` checks closed shape and pattern admission, all
+input words, wrong placement, nonzero unrelated values, reversed terms,
+positive-zero input padding, every output and guard, metadata binding, both
+orders and complete failed diagnostics. These CPU tests use synthetic outputs;
+they establish no C550 witness result.

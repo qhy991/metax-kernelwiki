@@ -16,10 +16,18 @@
 #include <utility>
 #include <vector>
 
+#ifndef C550_WMMA_CONTROL
+#define C550_WMMA_CONTROL 0
+#endif
+#if C550_WMMA_CONTROL != 0 && C550_WMMA_CONTROL != 1
+#error "C550_WMMA_CONTROL must be 0 or 1"
+#endif
+
 namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
+constexpr const char* kExperiment = C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
 
 void check_mc(mcError_t status, const char* expression) {
@@ -48,6 +56,9 @@ std::string json_environment(const char* key) {
 
 struct Case {
     std::string id;
+#if C550_WMMA_CONTROL
+    std::string order;
+#endif
     unsigned m = 0, n = 0, k = 0, warmups = 0, samples = 0, launches = 0;
     std::vector<uint16_t> a, b;
 };
@@ -97,15 +108,24 @@ void validate_inputs(const Case& c) {
 std::vector<Case> read_plan(const std::string& directory) {
     std::ifstream file(directory + "/cases.tsv");
     std::string line;
-    if (!file || !std::getline(file, line) || line != "id\tm\tn\tk\twarmups\tsamples\tlaunches")
+    const char* header = C550_WMMA_CONTROL ? "id\tm\tn\tk\torder\twarmups\tsamples\tlaunches"
+                                         : "id\tm\tn\tk\twarmups\tsamples\tlaunches";
+    if (!file || !std::getline(file, line) || line != header)
         throw std::runtime_error("Unsupported or missing cases.tsv");
     std::vector<Case> cases;
     while (std::getline(file, line)) {
         std::istringstream row(line);
         Case c;
         std::string trailing;
+#if C550_WMMA_CONTROL
+        if (!(row >> c.id >> c.m >> c.n >> c.k >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
+            throw std::runtime_error("Invalid control case row");
+        if (c.order != "wmma-first" && c.order != "scalar-first")
+            throw std::runtime_error("Unknown WMMA/scalar variant order");
+#else
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid case row");
+#endif
         if (c.id.empty() || c.id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != std::string::npos)
             throw std::runtime_error("Unsafe case id");
         for (const auto& old : cases)
@@ -138,7 +158,26 @@ __global__ void wmma_tile_kernel(const __half* a, const __half* b, float* output
     store_matrix_sync(output, accumulator_fragment, 16, mem_row_major);
 }
 
-void launch(const Case& c, const __half* a, const __half* b, float* output) {
+#if C550_WMMA_CONTROL
+__global__ void scalar_tile_kernel(const __half* a, const __half* b, float* output, unsigned chunks) {
+    const unsigned index = threadIdx.x;
+    const unsigned row = index / 16, col = index % 16;
+    float total = 0.0f;
+    for (unsigned k = 0; k < chunks * 16; ++k) {
+        const unsigned chunk = k / 16, local_k = k % 16;
+        const float left = __half2float(a[chunk * 256 + row * 16 + local_k]);
+        const float right = __half2float(b[chunk * 256 + col * 16 + local_k]);
+        total += left * right;
+    }
+    output[index] = total;
+}
+#endif
+
+void launch(const Case& c, const __half* a, const __half* b, float* output, bool scalar = false) {
+#if C550_WMMA_CONTROL
+    if (scalar) scalar_tile_kernel<<<1, 256>>>(a, b, output, (c.k + 15) / 16);
+    else
+#endif
     wmma_tile_kernel<<<1, 64>>>(a, b, output, (c.k + 15) / 16);
     MC_CHECK(mcGetLastError());
 }
@@ -148,6 +187,29 @@ uintptr_t observed_alignment(const void* pointer) {
     if (!value) throw std::runtime_error("Device allocation returned a null pointer");
     return value & (~value + 1);
 }
+
+#if C550_WMMA_CONTROL
+void retain_inputs(const Case& c, const char* phase, const __half* a, const __half* b,
+                   const std::string& directory, std::ostream& records) {
+    MC_CHECK(mcDeviceSynchronize());
+    const __half* pointers[] = {a, b};
+    const char* labels[] = {"a", "b"};
+    for (unsigned operand = 0; operand < 2; ++operand) {
+        std::vector<uint16_t> words(kOperandHalfwords);
+        MC_CHECK(mcMemcpy(words.data(), pointers[operand], words.size() * sizeof(uint16_t), mcMemcpyDeviceToHost));
+        const std::string name = c.id + "." + phase + "." + labels[operand] + ".f16";
+        std::ofstream file(directory + "/" + name, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(words.data()), words.size() * sizeof(uint16_t));
+        file.close();
+        if (!file) throw std::runtime_error("Could not retain device input snapshot");
+    }
+    records << "{\"type\":\"input_snapshot\",\"id\":" << json_string(c.id)
+            << ",\"phase\":" << json_string(phase) << ",\"order\":" << json_string(c.order)
+            << ",\"operand_halfwords_each\":1024,\"a_file\":" << json_string(c.id + "." + phase + ".a.f16")
+            << ",\"b_file\":" << json_string(c.id + "." + phase + ".b.f16") << "}\n";
+    records.flush();
+}
+#endif
 
 void run(const std::string& input_directory, const std::string& output_directory) {
     const uint16_t endian = 1;
@@ -168,7 +230,8 @@ void run(const std::string& input_directory, const std::string& output_directory
     MC_CHECK(mcGetDeviceProperties(&property, 0));
     if (std::string(property.name) != "MetaX C550" || property.waveSize != 64)
         throw std::runtime_error("Expected exact device MetaX C550 with observed wave size 64");
-    if (property.maxThreadsPerBlock < 64) throw std::runtime_error("Runtime device limit below block64");
+    if (property.maxThreadsPerBlock < (C550_WMMA_CONTROL ? 256 : 64))
+        throw std::runtime_error("Runtime device limit below the required probe block size");
     char pci[64]{};
     MC_CHECK(mcDeviceGetPCIBusId(pci, sizeof(pci), 0));
     int runtime_version = 0, driver_version = 0;
@@ -185,7 +248,7 @@ void run(const std::string& input_directory, const std::string& output_directory
             << ",\"shared_mem_per_block_bytes\":" << property.sharedMemPerBlock
             << ",\"max_threads_per_multiprocessor\":" << property.maxThreadsPerMultiProcessor
             << ",\"max_threads_per_block\":" << property.maxThreadsPerBlock << "}\n";
-    records << "{\"type\":\"protocol\",\"schema_version\":1,\"experiment\":\"native-wmma-fp16-fp32-16x16\","
+    records << "{\"type\":\"protocol\",\"schema_version\":1,\"experiment\":" << json_string(kExperiment) << ","
                "\"operand_dtype\":\"float16\",\"accumulator_dtype\":\"float32\",\"output_elements\":256,"
                "\"guard_elements_each_side\":64,\"required_wave_size\":64,\"timer\":\"mcEventElapsedTime\","
                "\"comparison\":\"finite exact numeric equality; signed zero equivalent; no tolerance\","
@@ -199,74 +262,123 @@ void run(const std::string& input_directory, const std::string& output_directory
             << ",\"MACA_LAUNCH_BLOCKING\":" << json_environment("MACA_LAUNCH_BLOCKING")
             << ",\"MACA_DIRECT_DISPATCH\":" << json_environment("MACA_DIRECT_DISPATCH")
             << ",\"MACA_CACHE_PATH\":" << json_environment("MACA_CACHE_PATH")
-            << ",\"MACA_CACHE_DISABLE\":" << json_environment("MACA_CACHE_DISABLE") << "}\n";
+            << ",\"MACA_CACHE_DISABLE\":" << json_environment("MACA_CACHE_DISABLE");
+#if C550_WMMA_CONTROL
+    records << ",\"control_mode\":1,\"variants_per_case\":2,\"input_snapshots\":[\"before\",\"between\",\"after\"],"
+               "\"input_rewrite_between_variants\":false,\"purpose\":\"correctness_diagnostic\",\"performance_accepted\":false,"
+               "\"scalar_source_scope\":\"float operands and accumulator; compiler contraction and emitted instructions are not prescribed\"";
+#endif
+    records << "}\n";
     records.flush();
     __half *device_a = nullptr, *device_b = nullptr;
-    float* device_c = nullptr;
+    float* device_c[2] = {nullptr, nullptr};
     MC_CHECK(mcMalloc(reinterpret_cast<void**>(&device_a), kOperandHalfwords * sizeof(__half)));
     MC_CHECK(mcMalloc(reinterpret_cast<void**>(&device_b), kOperandHalfwords * sizeof(__half)));
-    MC_CHECK(mcMalloc(reinterpret_cast<void**>(&device_c), (kOutputWords + 2 * kGuardWords) * sizeof(float)));
-    float* payload = device_c + kGuardWords;
+    const unsigned variant_count = C550_WMMA_CONTROL ? 2 : 1;
+    for (unsigned slot = 0; slot < variant_count; ++slot)
+        MC_CHECK(mcMalloc(reinterpret_cast<void**>(&device_c[slot]), (kOutputWords + 2 * kGuardWords) * sizeof(float)));
     const uintptr_t a_alignment = observed_alignment(device_a), b_alignment = observed_alignment(device_b);
-    const uintptr_t c_alignment = observed_alignment(payload);
     mcEvent_t start, stop;
     MC_CHECK(mcEventCreate(&start));
     MC_CHECK(mcEventCreate(&stop));
     for (const auto& c : cases) {
         MC_CHECK(mcMemcpy(device_a, c.a.data(), c.a.size() * sizeof(uint16_t), mcMemcpyHostToDevice));
         MC_CHECK(mcMemcpy(device_b, c.b.data(), c.b.size() * sizeof(uint16_t), mcMemcpyHostToDevice));
-        MC_CHECK(mcMemset(device_c, 0xff, (kOutputWords + 2 * kGuardWords) * sizeof(float)));
-        mcFuncAttributes attributes{};
-        MC_CHECK(mcFuncGetAttributes(&attributes, reinterpret_cast<const void*>(wmma_tile_kernel)));
-        records << "{\"type\":\"case\",\"id\":" << json_string(c.id)
+#if C550_WMMA_CONTROL
+        records << "{\"type\":\"logical_case\",\"id\":" << json_string(c.id)
                 << ",\"m\":" << c.m << ",\"n\":" << c.n << ",\"k\":" << c.k
-                << ",\"tile_m\":16,\"tile_n\":16,\"tile_k\":16,\"k_chunks\":" << (c.k + 15) / 16
-                << ",\"packed_chunks\":4,\"a_layout\":\"row_major\",\"b_layout\":\"col_major\",\"c_layout\":\"row_major\","
-                   "\"leading_dimension\":16,\"operand_dtype\":\"float16\",\"accumulator_dtype\":\"float32\","
-                   "\"output_elements\":256,\"operand_halfwords_each\":1024,\"physical_threads\":64,"
-                   "\"block_x\":64,\"block_y\":1,\"block_z\":1,\"grid_x\":1,\"grid_y\":1,\"grid_z\":1,"
-                   "\"required_wave_size\":64,\"participation\":\"all 64 physical threads; uniform K-chunk loop\","
-                   "\"a_file\":" << json_string(c.id + ".a.f16") << ",\"b_file\":" << json_string(c.id + ".b.f16")
-                << ",\"output_file\":" << json_string(c.id + ".f32") << ",\"guard_elements_each_side\":64,"
-                   "\"warmups\":10,\"samples\":10,\"launches_per_sample\":10,\"total_launches\":110,"
-                   "\"pointer_alignment_observed_bytes\":{\"a\":" << a_alignment << ",\"b\":" << b_alignment << ",\"c_payload\":" << c_alignment << "},"
-                   "\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
-                << ",\"numRegs\":" << attributes.numRegs << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
-                << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}}\n";
-        records.flush();
-        for (unsigned i = 0; i < c.warmups; ++i) launch(c, device_a, device_b, payload);
-        MC_CHECK(mcDeviceSynchronize());
-        for (unsigned sample = 0; sample < c.samples; ++sample) {
-            MC_CHECK(mcEventRecord(start, 0));
-            const auto host_start = std::chrono::steady_clock::now();
-            for (unsigned i = 0; i < c.launches; ++i) launch(c, device_a, device_b, payload);
-            const auto host_stop = std::chrono::steady_clock::now();
-            MC_CHECK(mcEventRecord(stop, 0));
-            MC_CHECK(mcEventSynchronize(stop));
-            float elapsed_ms = 0;
-            MC_CHECK(mcEventElapsedTime(&elapsed_ms, start, stop));
-            const double host_us = std::chrono::duration<double, std::micro>(host_stop - host_start).count();
-            if (!std::isfinite(elapsed_ms) || elapsed_ms <= 0 || !std::isfinite(host_us) || host_us <= 0)
-                throw std::runtime_error("Nonpositive or nonfinite timing");
-            records << "{\"type\":\"sample\",\"id\":" << json_string(c.id) << ",\"sample\":" << sample
-                    << ",\"event_batch_ms\":" << elapsed_ms << ",\"host_enqueue_batch_us\":" << host_us << "}\n";
+                << ",\"order\":" << json_string(c.order) << "}\n";
+        retain_inputs(c, "before", device_a, device_b, output_directory, records);
+#endif
+        for (unsigned stage = 0; stage < variant_count; ++stage) {
+            bool scalar = false;
+#if C550_WMMA_CONTROL
+            scalar = stage == 0 ? c.order == "scalar-first" : c.order == "wmma-first";
+            if (stage == 1) retain_inputs(c, "between", device_a, device_b, output_directory, records);
+#endif
+            float* output_base = device_c[scalar ? 1 : 0];
+            float* payload = output_base + kGuardWords;
+            const uintptr_t c_alignment = observed_alignment(payload);
+            const unsigned threads = scalar ? 256 : 64;
+            std::string output_name = c.id + ".f32";
+#if C550_WMMA_CONTROL
+            const char* variant = scalar ? "scalar" : "wmma";
+            output_name = c.id + "." + variant + ".f32";
+#endif
+            MC_CHECK(mcMemset(output_base, 0xff, (kOutputWords + 2 * kGuardWords) * sizeof(float)));
+            mcFuncAttributes attributes{};
+#if C550_WMMA_CONTROL
+            const void* function = scalar ? reinterpret_cast<const void*>(scalar_tile_kernel)
+                                          : reinterpret_cast<const void*>(wmma_tile_kernel);
+            MC_CHECK(mcFuncGetAttributes(&attributes, function));
+#else
+            MC_CHECK(mcFuncGetAttributes(&attributes, reinterpret_cast<const void*>(wmma_tile_kernel)));
+#endif
+            records << "{\"type\":\"case\",\"id\":" << json_string(c.id)
+                    << ",\"m\":" << c.m << ",\"n\":" << c.n << ",\"k\":" << c.k
+                    << ",\"tile_m\":16,\"tile_n\":16,\"tile_k\":16,\"k_chunks\":" << (c.k + 15) / 16
+                    << ",\"packed_chunks\":4,\"a_layout\":\"row_major\",\"b_layout\":\"col_major\",\"c_layout\":\"row_major\","
+                       "\"leading_dimension\":16,\"operand_dtype\":\"float16\",\"accumulator_dtype\":\"float32\","
+                       "\"output_elements\":256,\"operand_halfwords_each\":1024,\"physical_threads\":" << threads
+                    << ",\"block_x\":" << threads << ",\"block_y\":1,\"block_z\":1,\"grid_x\":1,\"grid_y\":1,\"grid_z\":1,"
+                       "\"required_wave_size\":64,\"participation\":" << json_string(scalar ? "one thread per C element; full padded K chunks" : "all 64 physical threads; uniform K-chunk loop")
+                    << ",\"a_file\":" << json_string(c.id + ".a.f16") << ",\"b_file\":" << json_string(c.id + ".b.f16")
+                    << ",\"output_file\":" << json_string(output_name) << ",\"guard_elements_each_side\":64,"
+                       "\"warmups\":10,\"samples\":10,\"launches_per_sample\":10,\"total_launches\":110,"
+                       "\"pointer_alignment_observed_bytes\":{\"a\":" << a_alignment << ",\"b\":" << b_alignment << ",\"c_payload\":" << c_alignment << "},"
+                       "\"function_attributes_before_timing\":{\"maxThreadsPerBlock\":" << attributes.maxThreadsPerBlock
+                    << ",\"numRegs\":" << attributes.numRegs << ",\"sharedSizeBytes\":" << attributes.sharedSizeBytes
+                    << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}";
+#if C550_WMMA_CONTROL
+            records << ",\"variant\":" << json_string(variant) << ",\"order\":" << json_string(c.order);
+#endif
+            records << "}\n";
+            records.flush();
+            for (unsigned i = 0; i < c.warmups; ++i) launch(c, device_a, device_b, payload, scalar);
+            MC_CHECK(mcDeviceSynchronize());
+            for (unsigned sample = 0; sample < c.samples; ++sample) {
+                MC_CHECK(mcEventRecord(start, 0));
+                const auto host_start = std::chrono::steady_clock::now();
+                for (unsigned i = 0; i < c.launches; ++i) launch(c, device_a, device_b, payload, scalar);
+                const auto host_stop = std::chrono::steady_clock::now();
+                MC_CHECK(mcEventRecord(stop, 0));
+                MC_CHECK(mcEventSynchronize(stop));
+                float elapsed_ms = 0;
+                MC_CHECK(mcEventElapsedTime(&elapsed_ms, start, stop));
+                const double host_us = std::chrono::duration<double, std::micro>(host_stop - host_start).count();
+                if (!std::isfinite(elapsed_ms) || elapsed_ms <= 0 || !std::isfinite(host_us) || host_us <= 0)
+                    throw std::runtime_error("Nonpositive or nonfinite timing");
+                records << "{\"type\":\"sample\",\"id\":" << json_string(c.id);
+#if C550_WMMA_CONTROL
+                records << ",\"variant\":" << json_string(variant);
+#endif
+                records << ",\"sample\":" << sample
+                        << ",\"event_batch_ms\":" << elapsed_ms << ",\"host_enqueue_batch_us\":" << host_us << "}\n";
+            }
+            std::vector<float> output(kOutputWords + 2 * kGuardWords);
+            MC_CHECK(mcMemcpy(output.data(), output_base, output.size() * sizeof(float), mcMemcpyDeviceToHost));
+            std::ofstream file(output_directory + "/" + output_name, std::ios::binary);
+            file.write(reinterpret_cast<const char*>(output.data()), output.size() * sizeof(float));
+            file.close();
+            if (!file) throw std::runtime_error("Could not retain complete C output and guards");
+            records.flush();
+            if (!records) throw std::runtime_error("Could not retain raw records");
         }
-        std::vector<float> output(kOutputWords + 2 * kGuardWords);
-        MC_CHECK(mcMemcpy(output.data(), device_c, output.size() * sizeof(float), mcMemcpyDeviceToHost));
-        std::ofstream file(output_directory + "/" + c.id + ".f32", std::ios::binary);
-        file.write(reinterpret_cast<const char*>(output.data()), output.size() * sizeof(float));
-        file.close();
-        if (!file) throw std::runtime_error("Could not retain complete C output and guards");
-        records.flush();
-        if (!records) throw std::runtime_error("Could not retain raw records");
+#if C550_WMMA_CONTROL
+        retain_inputs(c, "after", device_a, device_b, output_directory, records);
+#endif
     }
     MC_CHECK(mcEventDestroy(stop));
     MC_CHECK(mcEventDestroy(start));
-    MC_CHECK(mcFree(device_c));
+    for (unsigned slot = 0; slot < variant_count; ++slot) MC_CHECK(mcFree(device_c[slot]));
     MC_CHECK(mcFree(device_b));
     MC_CHECK(mcFree(device_a));
     MC_CHECK(mcDeviceSynchronize());
-    records << "{\"type\":\"complete\",\"cases\":" << cases.size() << ",\"cpu_correctness_checked\":false}\n";
+    records << "{\"type\":\"complete\",\"cases\":" << cases.size() << ",\"cpu_correctness_checked\":false";
+#if C550_WMMA_CONTROL
+    records << ",\"variant_executions\":" << cases.size() * 2;
+#endif
+    records << "}\n";
     records.close();
     if (!records) throw std::runtime_error("Could not finish raw records");
 }

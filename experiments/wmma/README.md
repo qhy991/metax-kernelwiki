@@ -168,3 +168,101 @@ exactness, transposed B, omitted K chunks, unstored padding, every guard positio
 wrong C extent, tampered metadata, nonfinite outputs and signed-zero equivalence.
 These tests do not compile the SDK or execute WMMA on a device. Actual native
 compilation and all-output device checking remain separate acceptance steps.
+
+## Opt-in paired scalar control with device-input readbacks
+
+`C550_WMMA_CONTROL=1` adds a diagnostic mode to this harness. The default macro
+value is zero, and `compile.sh` accepts only `0` or `1`. The original preparation,
+single-WMMA record format and strict checker remain available; its checker still
+stops at the first exact failure. Earlier failed runs and their oracle are not
+modified or reinterpreted by the new mode.
+
+The control uses the same twelve logical shapes, packed FP16 input words and
+integer-dot/256 reference. The source body of `wmma_tile_kernel` remains unchanged;
+this does not assert that the successor compiler output or binary is identical.
+A second kernel launches 256 threads, one per physical C element. It converts
+the same packed A-row/B-column operands with `__half2float`, uses float operands
+and a float accumulator, and computes ordinary multiplication and addition over
+the full `16*ceil(K/16)` padded reduction extent. K=0 still stores every zero
+output. This describes scalar source code, not forced IEEE instruction behavior,
+an independent ISA implementation or a promise that the scalar control passes.
+Compiler contraction and emitted instructions remain observations to inspect.
+
+Prepare the variant order explicitly:
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-control-forward \
+  --suite scalar-control --order wmma-first
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-control-reverse \
+  --suite scalar-control --order scalar-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 C550_WMMA_CONTROL=1 \
+  bash experiments/wmma/compile.sh /tmp/wmma-control-probe
+```
+
+The second command changes variant order. Reverse logical-case order separately
+in the retained second TSV when that is the declared run plan. Control TSV adds
+`order` after `k`; it must be `wmma-first` or `scalar-first`. The control oracle
+has a distinct `wmma-scalar-fp32-input-control` experiment label and exact snapshot
+and output policies. Wrong suites, unexpected orders or altered contracts are
+refused rather than translated. The device binary uses the same `--run` CLI,
+and CPU preparation/compilation and post-release checking stay outside the lease.
+
+For each logical case, the device process performs this sequence:
+
+1. Copy prepared A/B to their shared device allocations once; capture all 1,024
+   halfwords of each operand as the `before` readback.
+2. Reset the first variant's complete 384-word C allocation, run its ten warmups
+   and ten batches of ten launches, and immediately retain all C words and guards.
+3. Capture the complete A/B `between` readback, with no input rewrite.
+4. Reset and execute the second variant using its separate C allocation, retain
+   its complete output, and capture the complete A/B `after` readback.
+
+A/B remain the same allocations throughout the pair. The C allocations and
+files are named by variant, not execution position: `.wmma.f32` and `.scalar.f32`.
+The first output is closed on disk before the second variant starts. There are
+four explicit device buffers totaling 7,168 bytes. The default build still uses
+the original three buffers. Pointer alignments remain recorded observations;
+the control requires the device to admit a 256-thread block without importing
+another vendor's alignment or occupancy rules.
+
+Raw JSONL groups each pair under a `logical_case` record. The exact order is
+`input_snapshot(before)`, first `case` plus ten `sample` records,
+`input_snapshot(between)`, second `case` plus ten samples, and
+`input_snapshot(after)`. Variant records carry the variant, case ID, declared
+order, their own geometry, resource attributes and output file. Each snapshot
+binds its case ID, declared order, phase and A/B filenames. Completion reports
+logical-case and variant-execution counts separately.
+
+The control checker validates every prepared input against the unchanged fixed
+packing contract. It compares each device snapshot both with those prepared
+words and with the fixed packing. Snapshot equality proves equality at the
+three capture boundaries; it does not establish transient values inside a
+kernel or prove that no temporary mutation occurred.
+
+For every variant the checker retains `exact_passed`, all numerical mismatches,
+finite counts and separate guard integrity. Nonfinite observations retain their
+raw uint32 words and a JSON-null numerical value. Every logical case receives
+both variant analyses and all snapshot comparisons, even when WMMA, scalar or
+both fail. With a structurally complete run, any numeric, guard or snapshot
+violation produces complete JSON on stdout with `status="diagnostic_failed"`
+and exit code 1. Missing/truncated files, malformed records or contract/order
+mismatches instead produce `status="error"` on stderr; they do not masquerade
+as complete numerical observations. No tolerance is added.
+
+Each logical case retains 512 C payload words, 256 guard words and 6,144 input
+snapshot halfwords across three stages, plus validation of its 2,048 prepared
+halfwords. Each variant still has ten warmups and 10×10 timed launches. A paired
+single-case trace therefore has 220 kernel events with ten warmups in **each**
+110-event kernel group; removing one cumulative prefix of twenty warmups is
+incorrect. Profiling must identify the two kernel groups separately.
+
+Timing is descriptive only. The checker always reports
+`purpose="correctness_diagnostic"` and `performance_accepted=false`; it computes
+no speedup. If scalar passes while WMMA fails on equal captured inputs, that
+narrows the observed difference to the two execution paths. It does not by
+itself assign a hardware, compiler, SDK or instruction-precision cause.
+
+Additional tests in `tests/test_wmma_control.py` exercise both orders, all three
+snapshot phases, missing/mutated snapshots, wrong suite and order, scalar indexing,
+mixed passing/failing variant results, nonfinite values, guard failures, complete
+failure JSON and compile-flag admission. The original strict tests remain intact.

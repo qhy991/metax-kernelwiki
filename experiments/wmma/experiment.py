@@ -12,9 +12,13 @@ import struct
 import sys
 
 EXPERIMENT = "native-wmma-fp16-fp32-16x16"
+CONTROL_EXPERIMENT = "wmma-scalar-fp32-input-control"
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
 COLUMNS = ("id","m","n","k","warmups","samples","launches")
+CONTROL_COLUMNS = ("id","m","n","k","order","warmups","samples","launches")
+ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
+SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
 PACKED_CHUNKS = 4
 OPERAND_HALFWORDS = 1024
@@ -42,23 +46,26 @@ def default_cases() -> list[dict]:
     return [dict(id=f"wmma_m{m}_n{n}_k{k}",m=m,n=n,k=k,warmups=10,samples=10,launches=10) for m,n,k in SHAPES]
 
 
-def read_plan(path: Path) -> list[dict]:
+def read_plan(path: Path, control: bool = False) -> list[dict]:
+    columns = CONTROL_COLUMNS if control else COLUMNS
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle,delimiter="\t")
-        if tuple(reader.fieldnames or ()) != COLUMNS:
+        if tuple(reader.fieldnames or ()) != columns:
             raise ValueError("Unsupported cases.tsv header")
         rows = list(reader)
     if not 1 <= len(rows) <= 12:
         raise ValueError("A plan must contain 1 to 12 cases")
     result, ids = [], set()
     for row in rows:
-        if None in row or any(row[field] is None for field in COLUMNS):
+        if None in row or any(row[field] is None for field in columns):
             raise ValueError("Malformed case row")
-        case = {field:row[field] if field=="id" else int(row[field]) for field in COLUMNS}
+        case = {field:row[field] if field in ("id","order") else int(row[field]) for field in columns}
         if (not case["id"] or case["id"] in ids
                 or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for ch in case["id"])):
             raise ValueError("Invalid or duplicate case id")
         validate_case(case)
+        if control and case["order"] not in ORDERS:
+            raise ValueError("Unknown WMMA/scalar variant order")
         if (case["warmups"],case["samples"],case["launches"]) != (10,10,10):
             raise ValueError("Unsupported timing protocol")
         result.append(case)
@@ -143,33 +150,59 @@ def oracle_metadata() -> dict:
                 accumulator_prefix_numerator_bound=13440,guard_elements_each_side=64,guard_uint32=GUARD_VALUE)
 
 
-def prepare(destination: Path) -> dict:
+def control_oracle_metadata() -> dict:
+    return {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
+            "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
+            "input_policy": "one A/B H2D per logical case; same allocations and no rewrite between variants",
+            "output_policy": "separate guarded C allocations; each variant stores all 256 values",
+            "scalar_policy": "one thread per C element; float operands and accumulator; same full padded K chunks",
+            "analysis_policy": "complete per-variant exact diagnostics and snapshot equality; no tolerance or performance acceptance"}
+
+
+def control_cases(order: str = "wmma-first") -> list[dict]:
+    if order not in ORDERS:
+        raise ValueError("Unknown WMMA/scalar variant order")
+    return [dict(case, order=order) for case in default_cases()]
+
+
+def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
+    if suite not in ("default","scalar-control") or (suite=="default" and order is not None):
+        raise ValueError("Order is only supported by the scalar-control suite")
+    control = suite=="scalar-control"
+    cases = control_cases(order or "wmma-first") if control else default_cases()
     destination.mkdir(parents=True,exist_ok=False)
-    cases = default_cases()
     for case in cases:
         a,b = packed_inputs(case)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        writer=csv.DictWriter(handle,fieldnames=COLUMNS,delimiter="\t",lineterminator="\n")
+        writer=csv.DictWriter(handle,fieldnames=CONTROL_COLUMNS if control else COLUMNS,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
-    (destination/"oracle.json").write_text(json.dumps(oracle_metadata(),indent=2)+"\n")
+    (destination/"oracle.json").write_text(json.dumps(control_oracle_metadata() if control else oracle_metadata(),indent=2)+"\n")
     return dict(prepared=str(destination),cases=len(cases),input_bytes_per_case=4096)
 
 
-def case_metadata(case: dict) -> dict:
+def case_metadata(case: dict, variant: str | None = None) -> dict:
     validate_case(case)
-    return dict(m=case["m"],n=case["n"],k=case["k"],tile_m=16,tile_n=16,tile_k=16,
+    result = dict(m=case["m"],n=case["n"],k=case["k"],tile_m=16,tile_n=16,tile_k=16,
                 k_chunks=(case["k"]+15)//16,packed_chunks=4,a_layout="row_major",b_layout="col_major",c_layout="row_major",
                 leading_dimension=16,operand_dtype="float16",accumulator_dtype="float32",output_elements=256,
                 operand_halfwords_each=1024,physical_threads=64,block_x=64,block_y=1,block_z=1,grid_x=1,grid_y=1,grid_z=1,
                 required_wave_size=64,participation="all 64 physical threads; uniform K-chunk loop",
                 a_file=case["id"]+".a.f16",b_file=case["id"]+".b.f16",output_file=case["id"]+".f32",
                 guard_elements_each_side=64,warmups=10,samples=10,launches_per_sample=10,total_launches=110)
+    if variant is not None:
+        if variant not in ("wmma","scalar") or case.get("order") not in ORDERS:
+            raise ValueError("Unknown control variant or order")
+        result.update(variant=variant,order=case["order"],output_file=case["id"]+f".{variant}.f32")
+        if variant=="scalar":
+            result.update(physical_threads=256,block_x=256,
+                          participation="one thread per C element; full padded K chunks")
+    return result
 
 
-def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[dict]]:
+def validate_record_header(records: list[dict], cases: list[dict], experiment: str = EXPERIMENT) -> None:
     for kind in ("device","protocol","complete"):
         if sum(row.get("type")==kind for row in records) != 1:
             raise ValueError(f"Expected exactly one {kind} record")
@@ -185,7 +218,7 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[di
     for field in ("runtime_version_api","driver_version_api"):
         if type(device.get(field)) is not int or device[field]<0:
             raise ValueError(f"Invalid device version field: {field}")
-    for field,value in dict(schema_version=1,experiment=EXPERIMENT,operand_dtype="float16",accumulator_dtype="float32",
+    for field,value in dict(schema_version=1,experiment=experiment,operand_dtype="float16",accumulator_dtype="float32",
                             output_elements=256,guard_elements_each_side=64,required_wave_size=64,
                             timer="mcEventElapsedTime",comparison="finite exact numeric equality; signed zero equivalent; no tolerance").items():
         if type(protocol.get(field)) is not type(value) or protocol[field] != value:
@@ -196,6 +229,21 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[di
     if (type(records[-1].get("cases")) is not int or records[-1]["cases"] != len(cases)
             or records[-1].get("cpu_correctness_checked") is not False):
         raise ValueError("Completion metadata mismatch")
+
+
+def validate_resources(record: dict) -> None:
+    attributes=record.get("function_attributes_before_timing")
+    if (not isinstance(attributes,dict) or any(type(attributes.get(field)) is not int or attributes[field]<minimum
+            for field,minimum in (("maxThreadsPerBlock",1),("numRegs",0),("sharedSizeBytes",0),("localSizeBytes",0)))):
+        raise ValueError("Missing or invalid function attributes")
+    alignments=record.get("pointer_alignment_observed_bytes")
+    if (not isinstance(alignments,dict) or set(alignments)!={"a","b","c_payload"}
+            or any(type(value) is not int or value<=0 or value&(value-1) for value in alignments.values())):
+        raise ValueError("Missing or invalid pointer-alignment observations")
+
+
+def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[dict]]:
+    validate_record_header(records,cases)
     by_id={case["id"]:case for case in cases}
     declarations,samples=[],{key:[] for key in by_id}
     for record in records:
@@ -211,14 +259,7 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[di
             for field,value in case_metadata(by_id[key]).items():
                 if type(record.get(field)) is not type(value) or record[field] != value:
                     raise ValueError(f"Case metadata mismatch: {key}: {field}")
-            attributes=record.get("function_attributes_before_timing")
-            if (not isinstance(attributes,dict) or any(type(attributes.get(field)) is not int or attributes[field]<minimum
-                    for field,minimum in (("maxThreadsPerBlock",1),("numRegs",0),("sharedSizeBytes",0),("localSizeBytes",0)))):
-                raise ValueError("Missing or invalid function attributes")
-            alignments=record.get("pointer_alignment_observed_bytes")
-            if (not isinstance(alignments,dict) or set(alignments)!={"a","b","c_payload"}
-                    or any(type(value) is not int or value<=0 or value&(value-1) for value in alignments.values())):
-                raise ValueError("Missing or invalid pointer-alignment observations")
+            validate_resources(record)
             declarations.append(key)
         elif kind=="sample":
             if not declarations or key!=declarations[-1]:
@@ -239,8 +280,145 @@ def validate_records(records: list[dict], cases: list[dict]) -> dict[str,list[di
     return samples
 
 
+def snapshot_metadata(case: dict, phase: str) -> dict:
+    if phase not in SNAPSHOT_PHASES:
+        raise ValueError("Unknown input snapshot phase")
+    return dict(phase=phase,order=case["order"],operand_halfwords_each=1024,
+                a_file=f"{case['id']}.{phase}.a.f16",b_file=f"{case['id']}.{phase}.b.f16")
+
+
+def validate_control_records(records: list[dict], cases: list[dict]) -> dict:
+    validate_record_header(records,cases,CONTROL_EXPERIMENT)
+    if records[0].get("type")!="device" or records[1].get("type")!="protocol":
+        raise ValueError("Control device/protocol records must precede logical cases")
+    protocol=records[1]
+    for field,value in dict(control_mode=1,variants_per_case=2,input_snapshots=list(SNAPSHOT_PHASES),
+                            input_rewrite_between_variants=False,purpose="correctness_diagnostic",performance_accepted=False).items():
+        if type(protocol.get(field)) is not type(value) or protocol[field]!=value:
+            raise ValueError(f"Control protocol metadata mismatch: {field}")
+    if (type(records[-1].get("variant_executions")) is not int
+            or records[-1]["variant_executions"]!=2*len(cases)):
+        raise ValueError("Control completion variant count mismatch")
+    position=2
+    def take(kind,case,expected):
+        nonlocal position
+        if position>=len(records)-1:
+            raise ValueError(f"Missing control record: {kind}")
+        row=records[position]
+        position+=1
+        for field,value in dict(type=kind,id=case["id"],**expected).items():
+            if type(row.get(field)) is not type(value) or row[field]!=value:
+                raise ValueError(f"Control record order or metadata mismatch: {case['id']}: {kind}: {field}")
+        return row
+    result={}
+    for case in cases:
+        if case.get("order") not in ORDERS:
+            raise ValueError("Unknown WMMA/scalar variant order")
+        take("logical_case",case,{field:case[field] for field in ("m","n","k","order")})
+        snapshots={"before":take("input_snapshot",case,snapshot_metadata(case,"before"))}
+        variants={}
+        for index,variant in enumerate(ORDERS[case["order"]]):
+            if index:
+                snapshots["between"]=take("input_snapshot",case,snapshot_metadata(case,"between"))
+            declaration=take("case",case,case_metadata(case,variant))
+            validate_resources(declaration)
+            samples=[]
+            for sample in range(10):
+                row=take("sample",case,dict(variant=variant,sample=sample))
+                for field in ("event_batch_ms","host_enqueue_batch_us"):
+                    value=row.get(field)
+                    if type(value) not in (int,float) or not math.isfinite(value) or value<=0:
+                        raise ValueError(f"Invalid control timing: {field}")
+                samples.append(row)
+            variants[variant]=dict(declaration=declaration,samples=samples)
+        snapshots["after"]=take("input_snapshot",case,snapshot_metadata(case,"after"))
+        result[case["id"]]=dict(variants=variants,snapshots=snapshots)
+    if position!=len(records)-1:
+        raise ValueError("Unexpected trailing control records")
+    return result
+
+
+def analyze_control_output(case: dict, words: list[int]) -> dict:
+    if len(words)!=384:
+        raise ValueError("Incorrect control output extent")
+    expected=reference_output(case)
+    values=struct.unpack("<256f",struct.pack("<256I",*words[64:-64]))
+    mismatches=[]
+    for index,(observed,want) in enumerate(zip(values,expected)):
+        if not math.isfinite(observed) or observed!=want:
+            mismatches.append(dict(row=index//16,col=index%16,observed_word_uint32=words[64+index],
+                                   observed_value=observed if math.isfinite(observed) else None,expected_value=want,
+                                   kind="finite_unequal" if math.isfinite(observed) else "nonfinite"))
+    guard_mismatches=[dict(side=side,index=index,observed_word_uint32=value)
+                      for side,guard in (("prefix",words[:64]),("suffix",words[-64:]))
+                      for index,value in enumerate(guard) if value!=GUARD_VALUE]
+    return dict(exact_passed=not mismatches,payload_elements_checked=256,
+                finite_count=sum(math.isfinite(value) for value in values),
+                logical_outputs_checked=case["m"]*case["n"],padded_outputs_checked=256-case["m"]*case["n"],
+                mismatch_count=len(mismatches),mismatches=mismatches,guards_intact=not guard_mismatches,
+                guard_elements_checked=128,guard_mismatches=guard_mismatches)
+
+
+def check_control(input_directory: Path, output_directory: Path) -> dict:
+    if json.dumps(json.loads((input_directory/"oracle.json").read_text()),sort_keys=True,allow_nan=False) != json.dumps(control_oracle_metadata(),sort_keys=True):
+        raise ValueError("Unsupported control oracle metadata")
+    cases=read_plan(input_directory/"cases.tsv",control=True)
+    prepared={}
+    for case in cases:
+        a=read_words(input_directory/f"{case['id']}.a.f16",1024,2)
+        b=read_words(input_directory/f"{case['id']}.b.f16",1024,2)
+        validate_inputs(case,a,b)
+        prepared[case["id"]]=(a,b)
+    records=[json.loads(line) for line in (output_directory/"raw.jsonl").read_text().splitlines()]
+    indexed=validate_control_records(records,cases)
+    summaries=[]
+    for case in cases:
+        retained=indexed[case["id"]]
+        fixed=packed_inputs(case)
+        snapshots={}
+        for phase,snapshot in retained["snapshots"].items():
+            operands={}
+            for operand,want,contract_words in zip(("a","b"),prepared[case["id"]],fixed):
+                observed=read_words(output_directory/snapshot[operand+"_file"],1024,2)
+                differences=[index for index,(actual,expected) in enumerate(zip(observed,want)) if actual!=expected]
+                contract_differences=[index for index,(actual,expected) in enumerate(zip(observed,contract_words)) if actual!=expected]
+                operands[operand]=dict(equal_to_prepared=not differences,halfwords_checked=1024,
+                                       mismatch_count=len(differences),mismatch_indices=differences,
+                                       equal_to_fixed_packing=not contract_differences,
+                                       fixed_packing_mismatch_indices=contract_differences,
+                                       file=snapshot[operand+"_file"])
+            snapshots[phase]=dict(equal_to_prepared=all(row["equal_to_prepared"] for row in operands.values()),operands=operands)
+        variants={}
+        for variant,data in retained["variants"].items():
+            declaration=data["declaration"]
+            words=read_words(output_directory/declaration["output_file"],384,4)
+            row={**case_metadata(case,variant),**analyze_control_output(case,words)}
+            for field in ("function_attributes_before_timing","pointer_alignment_observed_bytes"):
+                row[field]=declaration[field]
+            timings=[sample["event_batch_ms"]*1000/10 for sample in data["samples"]]
+            row.update(event_mean_per_launch_us_median=statistics.median(timings),
+                       event_mean_per_launch_us_min=min(timings),event_mean_per_launch_us_max=max(timings),sample_count=10)
+            variants[variant]=row
+        inputs_equal=all(snapshot["equal_to_prepared"] for snapshot in snapshots.values())
+        passed=inputs_equal and all(row["exact_passed"] and row["guards_intact"] for row in variants.values())
+        summaries.append(dict(id=case["id"],m=case["m"],n=case["n"],k=case["k"],order=case["order"],
+                              input_snapshots=snapshots,inputs_unchanged=inputs_equal,variants=variants,passed=passed))
+    passed=all(row["passed"] for row in summaries)
+    return dict(status="pass" if passed else "diagnostic_failed",experiment=CONTROL_EXPERIMENT,
+                structural_valid=True,passed=passed,purpose="correctness_diagnostic",performance_accepted=False,
+                logical_cases_checked=len(cases),variant_outputs_checked=2*len(cases),
+                prepared_input_halfwords_checked=2*1024*len(cases),input_snapshot_halfwords_checked=6*1024*len(cases),
+                payload_elements_checked=2*256*len(cases),guard_elements_checked=2*128*len(cases),cases=summaries,
+                input_observation_scope="before/between/after capture boundaries only; no assertion about transient values inside a kernel",
+                tested_contract="same packed operands at before/between/after snapshots; both full256 FP32 outputs finite and exact to integer-dot/256, signed zeros equivalent; all guards intact",
+                timing_scope="descriptive per-variant batches; no speedup or performance acceptance")
+
+
 def check(input_directory: Path, output_directory: Path) -> dict:
-    if json.loads((input_directory/"oracle.json").read_text()) != oracle_metadata():
+    oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata():
+        return check_control(input_directory,output_directory)
+    if oracle != oracle_metadata():
         raise ValueError("Unsupported oracle metadata")
     cases=read_plan(input_directory/"cases.tsv")
     inputs={}
@@ -270,15 +448,18 @@ def check(input_directory: Path, output_directory: Path) -> dict:
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     commands=parser.add_subparsers(dest="command",required=True)
-    commands.add_parser("prepare").add_argument("directory",type=Path)
+    preparation=commands.add_parser("prepare")
+    preparation.add_argument("directory",type=Path)
+    preparation.add_argument("--suite",choices=("default","scalar-control"),default="default")
+    preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)
     checker.add_argument("output_directory",type=Path)
     args=parser.parse_args()
     try:
-        result=prepare(args.directory) if args.command=="prepare" else check(args.input_directory,args.output_directory)
+        result=prepare(args.directory,args.suite,args.order) if args.command=="prepare" else check(args.input_directory,args.output_directory)
         print(json.dumps(result,indent=2,allow_nan=False))
-        return 0
+        return 1 if result.get("status")=="diagnostic_failed" else 0
     except (OSError,ValueError,KeyError,TypeError) as error:
         print(json.dumps(dict(status="error",message=str(error))),file=sys.stderr)
         return 1

@@ -46,10 +46,21 @@ SIGN_PATTERNS = {
     "pair-nn": ((12,1),(-1,-13)),
 }
 SIGN_PRODUCT_BASELINES = {"positive12-k0":"positive-k0", "negative13-k1":"negative-k1", "pair-pn":"pair-forward"}
-# Only the two row0/column0 ordered-pair suites share this implementation.
+MAGNITUDE_EXPERIMENT = "wmma-scalar-fp32-magnitude-control"
+MAGNITUDE_SUITE = "magnitude-control"
+MAGNITUDE_ROLES = ("positive","negative","pair")
+MAGNITUDE_CASES = {f"q{q:02d}-{role}": (q,role) for q in range(1,15) for role in MAGNITUDE_ROLES}
+MAGNITUDE_PATTERNS = {
+    pattern: (((-q,0),(-1,0)) if role=="positive" else ((0,1),(0,-(q+1))) if role=="negative"
+              else ((-q,1),(-1,-(q+1))))
+    for pattern,(q,role) in MAGNITUDE_CASES.items()
+}
+MAGNITUDE_SIGN_BASELINES = {"q12-positive":"positive12-k0", "q12-negative":"negative13-k1", "q12-pair":"pair-pn"}
+# The closed row0/column0 ordered-pair suites share this implementation.
 ORDERED_PATTERN_SUITES = {
     PRODUCT_SUITE: ("product",PRODUCT_PATTERNS,"isolated-ordered-products",2),
     SIGN_SUITE: ("sign",SIGN_PATTERNS,"isolated-signed-products",3),
+    MAGNITUDE_SUITE: ("magnitude",MAGNITUDE_PATTERNS,"isolated-adjacent-magnitudes",4),
 }
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
@@ -59,6 +70,7 @@ PREFIX_COLUMNS = ("id","m","n","k","suite","family","order","warmups","samples",
 WITNESS_COLUMNS = ("id","m","n","k","suite","pattern","target_row","target_col","input_rule","order","warmups","samples","launches")
 PRODUCT_COLUMNS = WITNESS_COLUMNS
 SIGN_COLUMNS = WITNESS_COLUMNS
+MAGNITUDE_COLUMNS = ("id","m","n","k","suite","pattern","q","role","target_row","target_col","input_rule","order","warmups","samples","launches")
 ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
 SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
@@ -155,23 +167,29 @@ def read_sign_plan(path: Path) -> list[dict]:
     return _read_pattern_plan(path,SIGN_SUITE)
 
 
+def read_magnitude_plan(path: Path) -> list[dict]:
+    return _read_pattern_plan(path,MAGNITUDE_SUITE)
+
+
 def _read_pattern_plan(path: Path, suite: str) -> list[dict]:
     label,maximum,validate={WITNESS_SUITE:("witness",3,validate_witness_case),
                             PRODUCT_SUITE:("product",6,validate_product_case),
-                            SIGN_SUITE:("sign",8,validate_sign_case)}[suite]
+                            SIGN_SUITE:("sign",8,validate_sign_case),
+                            MAGNITUDE_SUITE:("magnitude",42,validate_magnitude_case)}[suite]
+    columns=MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS
     with path.open(newline="") as handle:
         reader=csv.DictReader(handle,delimiter="\t")
-        if tuple(reader.fieldnames or ())!=WITNESS_COLUMNS:
+        if tuple(reader.fieldnames or ())!=columns:
             raise ValueError(f"Unsupported {label} cases.tsv header")
         rows=list(reader)
     if not 1<=len(rows)<=maximum:
         raise ValueError(f"A {label} plan must contain 1 to {maximum} cases")
     cases,ids,patterns=[],set(),set()
-    text_fields={"id","suite","pattern","input_rule","order"}
+    text_fields={"id","suite","pattern","input_rule","order","role"}
     for row in rows:
-        if None in row or any(row[field] is None for field in WITNESS_COLUMNS):
+        if None in row or any(row[field] is None for field in columns):
             raise ValueError(f"Malformed {label} case row")
-        case={field:row[field] if field in text_fields else int(row[field]) for field in WITNESS_COLUMNS}
+        case={field:row[field] if field in text_fields else int(row[field]) for field in columns}
         if (not case["id"] or case["id"] in ids
                 or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for ch in case["id"])):
             raise ValueError("Invalid or duplicate case id")
@@ -237,13 +255,20 @@ def validate_sign_case(case: dict) -> None:
     _validate_ordered_case(case,SIGN_SUITE)
 
 
+def validate_magnitude_case(case: dict) -> None:
+    _validate_ordered_case(case,MAGNITUDE_SUITE)
+
+
 def _validate_ordered_case(case: dict, suite: str) -> None:
     label,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
-    if (case.get("suite")!=suite or case.get("pattern") not in patterns
+    invalid_binding=suite==MAGNITUDE_SUITE and (type(case.get("q")) is not int
+            or (case.get("q"),case.get("role"))!=MAGNITUDE_CASES.get(case.get("pattern")))
+    if (invalid_binding or case.get("suite")!=suite or case.get("pattern") not in patterns
             or any(type(case.get(field)) is not int for field in ("m","n","k","target_row","target_col"))
             or (case["m"],case["n"],case["k"],case["target_row"],case["target_col"])!=(16,16,2,0,0)
             or case.get("input_rule")!=rule):
-        raise ValueError(f"Shape, pattern, target or input rule outside the fixed WMMA {label} cases")
+        fields="Shape, q, role, pattern, target or input rule" if suite==MAGNITUDE_SUITE else "Shape, pattern, target or input rule"
+        raise ValueError(f"{fields} outside the fixed WMMA {label} cases")
 
 
 def product_cases(order: str = "wmma-first") -> list[dict]:
@@ -254,13 +279,21 @@ def sign_cases(order: str = "wmma-first") -> list[dict]:
     return _ordered_cases(SIGN_SUITE,order)
 
 
+def magnitude_cases(order: str = "wmma-first") -> list[dict]:
+    return _ordered_cases(MAGNITUDE_SUITE,order)
+
+
 def _ordered_cases(suite: str, order: str) -> list[dict]:
     if order not in ORDERS:
         raise ValueError("Unknown WMMA/scalar variant order")
     label,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
-    return [dict(id=label+"_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=suite,
+    cases=[dict(id=label+"_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=suite,
                  pattern=pattern,target_row=0,target_col=0,input_rule=rule,order=order,
                  warmups=10,samples=10,launches=10) for pattern in patterns]
+    if suite==MAGNITUDE_SUITE:
+        for case in cases:
+            case["q"],case["role"]=MAGNITUDE_CASES[case["pattern"]]
+    return cases
 
 
 def product_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
@@ -269,6 +302,10 @@ def product_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
 
 def sign_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
     return _ordered_packed_inputs(case,SIGN_SUITE)
+
+
+def magnitude_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
+    return _ordered_packed_inputs(case,MAGNITUDE_SUITE)
 
 
 def _ordered_packed_inputs(case: dict, suite: str) -> tuple[list[int],list[int]]:
@@ -286,6 +323,10 @@ def validate_product_inputs(case: dict, a: list[int], b: list[int]) -> dict:
 
 def validate_sign_inputs(case: dict, a: list[int], b: list[int]) -> dict:
     return _validate_ordered_inputs(case,a,b,SIGN_SUITE)
+
+
+def validate_magnitude_inputs(case: dict, a: list[int], b: list[int]) -> dict:
+    return _validate_ordered_inputs(case,a,b,MAGNITUDE_SUITE)
 
 
 def _validate_ordered_inputs(case: dict, a: list[int], b: list[int], suite: str) -> dict:
@@ -306,6 +347,10 @@ def sign_reference_output(case: dict) -> list[float]:
     return _ordered_reference_output(case,SIGN_SUITE)
 
 
+def magnitude_reference_output(case: dict) -> list[float]:
+    return _ordered_reference_output(case,MAGNITUDE_SUITE)
+
+
 def _ordered_reference_output(case: dict, suite: str) -> list[float]:
     """Two logical integer products; no packed-array or kernel indexing is reused."""
     _validate_ordered_case(case,suite)
@@ -323,6 +368,10 @@ def sign_pattern_contracts() -> list[dict]:
     return _ordered_pattern_contracts(SIGN_SUITE)
 
 
+def magnitude_pattern_contracts() -> list[dict]:
+    return _ordered_pattern_contracts(MAGNITUDE_SUITE)
+
+
 def _ordered_pattern_contracts(suite: str) -> list[dict]:
     _,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
     result=[]
@@ -332,10 +381,14 @@ def _ordered_pattern_contracts(suite: str) -> list[dict]:
                            k_slots=[0,1],a_numerators=list(left),b_numerators=list(right),product_numerators=products,
                            nonzero_product_k_slots=[k for k,value in enumerate(products) if value!=0],
                  target_reference_numerator=sum(products))
-        if suite==SIGN_SUITE:
+        if suite in (SIGN_SUITE,MAGNITUDE_SUITE):
             row.update(product_signs=[(value>0)-(value<0) for value in products],
-                       product_magnitudes=[abs(value) for value in products],
-                       matching_product_pattern=SIGN_PRODUCT_BASELINES.get(pattern))
+                       product_magnitudes=[abs(value) for value in products])
+        if suite==SIGN_SUITE:
+            row.update(matching_product_pattern=SIGN_PRODUCT_BASELINES.get(pattern))
+        if suite==MAGNITUDE_SUITE:
+            q,role=MAGNITUDE_CASES[pattern]
+            row.update(q=q,role=role,matching_sign_pattern=MAGNITUDE_SIGN_BASELINES.get(pattern))
         result.append(row)
     return result
 
@@ -346,6 +399,10 @@ def product_case_fields(case: dict) -> dict:
 
 def sign_case_fields(case: dict) -> dict:
     return _ordered_case_fields(case,SIGN_SUITE)
+
+
+def magnitude_case_fields(case: dict) -> dict:
+    return _ordered_case_fields(case,MAGNITUDE_SUITE)
 
 
 def _ordered_case_fields(case: dict, suite: str) -> dict:
@@ -367,6 +424,20 @@ def sign_protocol_metadata() -> dict:
                 paired_b_numerators=[-1,-13],
                 standalone_inactive_slot_policy="both A and B are positive zero at the inactive K slot",
                 baseline_scope="matching_product_pattern identifies a declared equal operand contract, not a new device comparison")
+
+
+def magnitude_protocol_metadata() -> dict:
+    return dict(witness_mode=4,suite=MAGNITUDE_SUITE,magnitude_patterns=magnitude_pattern_contracts(),
+                logical_shape=[16,16,2],maximum_cases=42,input_scale_denominator=16,target_reference_denominator=256,
+                magnitude_rule="only A row0 and B column0 contain the declared ordered pairs at k0,k1; all other input words are positive zero",
+                q_min=1,q_max=14,roles=list(MAGNITUDE_ROLES),
+                standalone_inactive_slot_policy="both A and B are positive zero at the inactive K slot",
+                baseline_scope="matching_sign_pattern identifies a declared equal operand contract, not a new device comparison")
+
+
+def _ordered_protocol_metadata(suite: str) -> dict:
+    return {PRODUCT_SUITE:product_protocol_metadata,SIGN_SUITE:sign_protocol_metadata,
+            MAGNITUDE_SUITE:magnitude_protocol_metadata}[suite]()
 
 
 def halfword(numerator: int) -> int:
@@ -447,7 +518,7 @@ def oracle_metadata() -> dict:
 
 
 def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -> dict:
-    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE) or prefix):
+    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or prefix):
         raise ValueError("Unknown or incompatible paired control suite")
     result = {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
             "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
@@ -473,8 +544,9 @@ def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -
                       target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping")
     if suite in ORDERED_PATTERN_SUITES:
         result.pop("a_rule");result.pop("b_rule")
-        protocol=sign_protocol_metadata() if suite==SIGN_SUITE else product_protocol_metadata()
-        result.update(experiment=SIGN_EXPERIMENT if suite==SIGN_SUITE else PRODUCT_EXPERIMENT,**protocol,
+        protocol=_ordered_protocol_metadata(suite)
+        experiment={PRODUCT_SUITE:PRODUCT_EXPERIMENT,SIGN_SUITE:SIGN_EXPERIMENT,MAGNITUDE_SUITE:MAGNITUDE_EXPERIMENT}[suite]
+        result.update(experiment=experiment,**protocol,
                       reference="only C00 is the sum of the two declared integer products/256; all other outputs are zero",
                       target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping",
                       k_slot_scope="declared logical K positions; no native accumulation-order assertion")
@@ -496,7 +568,7 @@ def prefix_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
-    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE) or (suite=="default" and order is not None):
+    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or (suite=="default" and order is not None):
         raise ValueError("Order is only supported by paired control suites")
     prefix = suite==PREFIX_SUITE
     witness = suite==WITNESS_SUITE
@@ -512,7 +584,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        columns=WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
+        columns=MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
         writer=csv.DictWriter(handle,fieldnames=columns,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
@@ -530,7 +602,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
 
 def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None = None) -> None:
     if suite is not None:
-        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE) or prefix:
+        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or prefix:
             raise ValueError("Unknown or incompatible paired control suite")
         if suite in ORDERED_PATTERN_SUITES:
             _validate_ordered_case(case,suite)
@@ -708,7 +780,7 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
             if json.dumps(protocol.get(field),sort_keys=True,allow_nan=False)!=json.dumps(value,sort_keys=True):
                 raise ValueError(f"Witness protocol metadata mismatch: {field}")
     if suite in ORDERED_PATTERN_SUITES:
-        expected=sign_protocol_metadata() if suite==SIGN_SUITE else product_protocol_metadata()
+        expected=_ordered_protocol_metadata(suite)
         for field,value in expected.items():
             if json.dumps(protocol.get(field),sort_keys=True,allow_nan=False)!=json.dumps(value,sort_keys=True):
                 raise ValueError(f"{ORDERED_PATTERN_SUITES[suite][0].capitalize()} protocol metadata mismatch: {field}")
@@ -865,6 +937,8 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata(suite=MAGNITUDE_SUITE):
+        return check_control(input_directory,output_directory,suite=MAGNITUDE_SUITE)
     if oracle==control_oracle_metadata(suite=SIGN_SUITE):
         return check_control(input_directory,output_directory,suite=SIGN_SUITE)
     if oracle==control_oracle_metadata(suite=PRODUCT_SUITE):
@@ -907,7 +981,7 @@ def main() -> int:
     commands=parser.add_subparsers(dest="command",required=True)
     preparation=commands.add_parser("prepare")
     preparation.add_argument("directory",type=Path)
-    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE),default="default")
+    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE),default="default")
     preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)

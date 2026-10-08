@@ -371,7 +371,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 `C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
-successor modes `2` and `3` select only the separate product and sign suites
+successor modes `2`, `3` and `4` select only the separate product, sign and magnitude suites
 below. All nonzero modes require paired control and prefix mode zero; the compile script
 and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
@@ -441,11 +441,12 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-product-probe
 ```
 
-The compile flag is the closed enum `0|1|2|3`: zero preserves the original
+The compile flag is the closed enum `0|1|2|3|4`: zero preserves the original
 non-pattern modes, one admits only `witness-control`, two admits only
-`product-control`, and three admits only `sign-control` below. Mode 2 is a deliberate successor contract; it is not an
+`product-control`, three admits only `sign-control`, and four admits only
+`magnitude-control` below. Mode 2 is a deliberate successor contract; it is not an
 extension to the patterns accepted by mode 1. Values outside that enum fail
-before compilation. Modes 1, 2 and 3 require `C550_WMMA_CONTROL=1` and
+before compilation. Modes 1 through 4 require `C550_WMMA_CONTROL=1` and
 `C550_WMMA_PREFIX=0`.
 
 Products reuse the witness TSV column names, but `suite=product-control` and
@@ -529,8 +530,9 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 Mode 3 is an explicit successor contract and admits only `sign-control` with
-`input_rule=isolated-signed-products`. Mode 4 is invalid. Existing modes 0, 1
-and 2 retain their own suite and pattern admission. The TSV uses the existing
+`input_rule=isolated-signed-products`. Successor mode 4 selects the separate
+magnitude suite below; values outside 0 through 4 are invalid. Existing modes
+0, 1 and 2 retain their own suite and pattern admission. The sign TSV uses the existing
 pattern columns; shared column names do not permit cross-suite rows. Sign
 plans contain one to eight distinct patterns. The ninth row is refused before
 reading its input files. The table order is the default; both kernel orders,
@@ -568,3 +570,85 @@ factorization, signs and magnitudes, positive-zero inputs, all physical outputs,
 explicit null and deep typed metadata, guards, snapshots, mode boundaries and
 complete mixed-failure diagnostics. These CPU tests use synthetic outputs and
 establish no new device result.
+
+## Explicit adjacent-magnitude suite
+
+`prepare --suite magnitude-control` fixes logical `M=N=16, K=2` and target
+`C[0,0]`, and tests every integer q from 1 through 14. Each q has three roles:
+
+| Role | A numerators at K0, K1 | B numerators at K0, K1 | C00 numerator |
+| --- | --- | --- | --- |
+| `positive` | `[-q, 0]` | `[-1, 0]` | `q` |
+| `negative` | `[0, 1]` | `[0, -(q+1)]` | `-(q+1)` |
+| `pair` | `[-q, 1]` | `[-1, -(q+1)]` | `-1` |
+
+Operand numerators are divided by 16 before packing; the independent integer
+reference divides each C00 numerator by 256. Only A row 0 and B column 0 can
+be nonzero. All other input words are positive zero, and both operands at an
+inactive standalone K slot are positive zero. Every output, including all 255
+non-target values, must be finite and numerically exact. Output signed zeros
+remain equivalent. The largest absolute input numerator is 15 at q=14, within
+the host's existing exact sixteenth-encoding domain. q=0 and q=15 are refused;
+the sweep does not establish behavior outside this range.
+
+The full plan has 42 distinct patterns: `q01-positive`, `q01-negative`,
+`q01-pair`, then the same roles for q02 through q14. Its case IDs use underscores,
+for example `magnitude_q01_positive`. Both kernel orders are supported; case
+reordering and subsets must be explicit in the saved TSV. A subset cannot claim
+coverage of all fourteen magnitude groups.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-magnitude-input \
+  --suite magnitude-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=4 \
+  bash experiments/wmma/compile.sh /tmp/wmma-magnitude-probe
+```
+
+Mode 4 admits only `magnitude-control`; mode 5 is invalid. Its exact TSV columns
+are `id, m, n, k, suite, pattern, q, role, target_row, target_col, input_rule, order, warmups, samples, launches`
+(tab-separated). q and role must match the closed pattern name, target `(0,0)`
+and `input_rule=isolated-adjacent-magnitudes`. The new header makes q and role
+explicit and is rejected by old modes. Mode 4 also rejects all old headers.
+A plan contains one to 42 distinct admitted patterns, and the 43rd row is
+refused before its input files are read.
+
+The oracle and raw protocol use experiment
+`wmma-scalar-fp32-magnitude-control`. The protocol records `witness_mode=4`,
+`magnitude_patterns`, the q range, the three roles, scales and the 42-case bound.
+Each logical-case, variant and snapshot record binds integer `q` and string
+`role`, ordered operand vectors, product numerators, signs, magnitudes, slots
+and exact reference numerator. It also requires `matching_sign_pattern`:
+
+- `q12-positive` maps to `positive12-k0`;
+- `q12-negative` maps to `negative13-k1`;
+- `q12-pair` maps to `pair-pn`;
+- all other patterns declare explicit JSON null.
+
+These three mappings state known equal packed-input contracts, not new device
+comparisons. Missing nullable fields, wrong roles or magnitudes, and Boolean or
+floating-point substitutions for integer metadata are refused. The factorization
+also remains fixed: moving a sign between operands or permuting their K slots
+under an unchanged case label fails complete packed-input validation, even if
+the mathematical dot product stays the same.
+
+The suite reuses the ordered-pair host implementation and the existing paired
+executor. Both device kernels and the launch helper remain unchanged, as do
+physical tile size, padded K16 execution, buffer roles, guards, three complete
+input snapshots and the exact oracle policy. One full 42-pattern order checks
+21,504 payload words, 10,752 guards, 86,016 prepared halfwords and 258,048 snapshot
+halfwords. It retains 840 timed batches and executes 9,240 kernel launches
+including warmups. Timings remain descriptive with no performance acceptance.
+
+The paired mathematical reference stays `-1/256` while the two signed product
+magnitudes change. Individual-product observations and joint observations remain
+separate; no additive error model, native accumulation order, rounding mechanism,
+physical lane mapping or unique hardware/compiler cause follows from this
+protocol. A complete bounded sweep can describe its observed q dependence;
+it cannot establish a rule for arbitrary operands, wider q ranges or GEMM.
+
+`tests/test_wmma_magnitudes.py` covers the full table, exact packed words and
+integer references, range and role refusals, explicit null and deep types,
+known baselines, factorization, inactive operands, guards, snapshots, both
+orders and complete numerical failures. Synthetic CPU outputs are not C550
+measurement evidence.

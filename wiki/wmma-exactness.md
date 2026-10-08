@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite. A [logical-prefix successor](#successor-logical-k-prefixes-and-a-two-term-witness) now exposes a two-product witness at dense K=2 and a singleton C[0,0] witness at K=4.
+In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite. A [logical-prefix successor](#successor-logical-k-prefixes-and-a-two-term-witness) exposes a two-product witness at dense K=2. The later [isolation and relocation control](#successor-isolation-and-relocation-of-the-two-products) preserves that residual with only two nonzero elements per operand, at both C[13,2] and C[0,0].
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
@@ -151,7 +151,37 @@ Both preselected K16 traces match the complete outputs of their corresponding sw
 
 The [complete prefix result](../data/results/20261008-wmma-prefix.json) also retains 12 old default cases and 12 old paired-control cases as regressions. Their 36 output buffers match the corresponding earlier public results. Across primary and regression runs, all 82 scalar matrices are exact; the overall record remains `correctness.passed=false` and `performance_accepted=false`. It contains 94 logical cases, 176 output matrices, 45,056 payload words, 22,528 guards, 192,512 prepared input halfwords, 503,808 captured input halfwords and 1,760 raw timing batches. All six workers and two profiled applications exited and passed release checks. No result was promoted to open-cake-ir.
 
-A bounded next experiment can preserve the dense K2 witness at C[13,2] while zeroing unrelated rows and columns, then relocate the same two products to C[0,0] under a new input contract. That can test surrounding-data and position effects. The current experiment neither performs that isolation nor uniquely assigns the residual to hardware, a compiler transformation, fragment loading or internal arithmetic.
+The successor below tests the proposed isolation and relocation under a new input contract. The prefix scan itself does not perform that intervention or uniquely assign the residual to hardware, a compiler transformation, fragment loading or internal arithmetic.
+
+## Successor: isolation and relocation of the two products
+
+Source `6fd66b9` adds an explicit `witness-control` suite. All three patterns have the same logical shape **M=N=16, K=2**, physical 16×16 tile and launch geometry. Only the host-prepared operands and their independent reference change. Both device kernel bodies and launch helpers remain unchanged; the pattern selects no device branch. This source continuity does not assert binary identity with an earlier build. The [probe guide](../experiments/wmma/README.md#explicit-two-term-witness-suite) records the closed pattern/target/input-rule contract.
+
+`dense-origin` retains the prefix study's formulas. `isolated-origin` keeps only A row13 and B column2, with ordered numerator pairs **[-12,1]** and **[-1,-13]**, each divided by 16. `isolated-c00` moves those same ordered pairs to A row0 and B column0. Every other operand position is positive zero, including the unused K positions and packed chunks. The isolated reference has one nonzero output, `-1/256`, at its declared target.
+
+The plan fixed a forward WMMA-first sweep, a reversed scalar-first sweep in another process, and one separate WMMA-first trace for each pattern. Each pattern therefore has three retained paired observations, across five primary processes in total. The following target words are the same in all three observations:
+
+| Pattern | Nonzero A / B halfwords | Target | WMMA FP32 word | Scalar / reference FP32 word |
+| --- | ---: | --- | --- | --- |
+| `dense-origin` | 31 / 31 | C[13,2] | `0xbb800001` | `0xbb800000` |
+| `isolated-origin` | 2 / 2 | C[13,2] | `0xbb800001` | `0xbb800000` |
+| `isolated-c00` | 2 / 2 | C[0,0] | `0xbb800001` | `0xbb800000` |
+
+All **nine WMMA matrices have exactly one unequal element**, at the target. All **nine scalar matrices are exact**. The WMMA value is `-0.003906250465661287`; the reference is `-0.00390625`, a signed residual of `-2^-31`. Every other isolated output is numerically zero in both implementations. All values are finite, all guards intact, and all **55,296 primary input-snapshot halfwords** match the prepared inputs and fixed pattern contract.
+
+Isolation masks 30 unrelated logical slots per operand, of which 29 were nonzero and actually change. Relocation changes four halfwords per operand: two original slots become zero and two destination slots receive the same words. Both ordered pairs remain bitwise identical through these interventions, including all three device readbacks. Complete output buffers match across the two sweep orders, and each trace matches both corresponding sweep outputs.
+
+The prefix study's singleton C00/K2 reference is `153/256`. This relocated case preserves the original row13/column2 pairs and reference `-1/256`; it is a separate input contract. Neither K nor output position alone identifies the tested computation.
+
+The residual therefore persists after clearing the dense surrounding entries and at both tested output coordinates. Those entries and the original coordinate are not necessary for this observed witness. This is a sparse two-product example inside a complete WMMA tile, not an isolated native-instruction measurement or evidence that all positions behave alike. Loading, lowering and internal arithmetic remain possible causes; no unique hardware attribution or general error bound follows.
+
+Each of the three traces contains 220 actual kernel events, with separate 110-event WMMA/scalar groups and ten warmups per group. The tool reports WMMA block64/28 registers and scalar block256/36 registers; shared/private memory is zero and each group has 110 false recompilation flags. Exported time units remain unverified. Timings are retained for traceability and are not accepted as performance evidence.
+
+The [complete witness record](../data/results/20261008-wmma-witness.json) retains all prepared inputs, snapshots and output words. Its primary scope is nine paired cases, 18 matrices, 4,608 payload values, 2,304 guard words and 180 timing batches. Separate default12, old-control12 and prefix34 regressions add 58 logical cases and 104 matrices; these auxiliary buffers match their corresponding previous results. Across all runs: 67 logical cases, 122 matrices, 31,232 payload values, 15,616 guards, 137,216 prepared halfwords, 337,920 captured halfwords and 1,220 raw batches. All 55 scalar matrices are exact; WMMA has 14 exact matrices out of 67, with 813 unequal elements in the others. Overall `correctness.passed=false` and `performance_accepted=false` remain explicit.
+
+Frozen-source verification passed 136 CPU checks, all four native build modes, 15 input/format negatives and three incompatible-mode negatives. All eight device workers and three profiled applications exited and passed release checks. No result was promoted to open-cake-ir.
+
+A next bounded study can measure the two products separately and then together in both K orders, keeping the isolated C00 setting, physical tile, scalar control and exact oracle. That can test whether the residual already appears in a one-product output or only in the two-product combination. These additional conditions have not been executed here, and the present witness is not claimed to be globally minimal.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

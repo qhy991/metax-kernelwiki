@@ -139,8 +139,16 @@ Dense K2 first failed at C[13,2]: the two products 3/64 and -13/256 sum exactly 
 
 [Full prefix curve and witness](../wiki/wmma-exactness.md#successor-logical-k-prefixes-and-a-two-term-witness) · [All actual inputs, snapshots, outputs and batches](../data/results/20261008-wmma-prefix.json). The auxiliary old default/control regressions contribute another 24 logical cases and 36 outputs, all matching their earlier buffers. Overall: 94 logical cases, 176 outputs and 1,760 batches; all 82 scalar outputs exact, WMMA contract still failed, performance still unaccepted. Six workers and two profiled applications exited and passed release checks. No promotion to open-cake-ir.
 
+## 2026-10-08: Isolating and relocating the two-product WMMA witness
+
+Source `6fd66b9` adds a separate three-pattern input contract at M=N=16,K=2. The original dense formulas are followed by an isolated A row13/B column2, then the same ordered pairs relocated to row0/column0. Both kernel bodies and launch helpers remain unchanged. The fixed source passed 136 CPU checks, four native build modes, 15 input/format refusals and three compile-mode refusals before GPU work.
+
+Two opposite-order sweeps and three preselected traces yield nine paired primary observations. Every WMMA matrix has one target mismatch, `0xbb800001` instead of exact `0xbb800000`; scalar matrices are all exact. All other isolated outputs are zero, snapshots agree and guards remain intact. Isolation changes 29 previously nonzero halfwords per operand, and relocation changes four; the ordered pairs remain bitwise identical. Complete outputs match across orders and corresponding traces. The residual therefore survives both interventions, without identifying a unique cause or general position independence.
+
+[Isolation and relocation evidence](../wiki/wmma-exactness.md#successor-isolation-and-relocation-of-the-two-products) · [All retained input/output words and batches](../data/results/20261008-wmma-witness.json). Primary coverage is 9 logical cases and 18 matrices; auxiliary default/control/prefix regressions add 58 logical cases and 104 matrices, matching prior outputs. Overall: 67 logical cases, 122 matrices and 1,220 batches; scalar 55/55 exact, WMMA 14/67 exact with 813 unequal elements. Exact acceptance remains failed and performance unaccepted. All eight workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
 ## Next questions
 
-- Isolate the dense K2 witness at C[13,2] while preserving its two operands, then relocate those products to C[0,0] in a successor input contract. Keep physical participation, scalar controls and exact checks. The current scan did not perform this isolation.
+- Test the isolated C00 products separately, then together in both K orders, under a successor input contract. Preserve physical participation, scalar controls and exact checks. These new combinations have not been measured.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

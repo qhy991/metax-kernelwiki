@@ -212,7 +212,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA exactness: logical K prefixes and a two-term witness",
+      "title": "C550 WMMA exactness: isolating and relocating a two-product witness",
       "tags": [
         "WMMA",
         "matrix",
@@ -230,7 +230,10 @@
         "K prefix",
         "singleton",
         "dense",
-        "two-term witness"
+        "two-term witness",
+        "isolation",
+        "relocation",
+        "input pattern"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -239,10 +242,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/ef22b51a416b4abf741494576a6402e8a50b2386",
         "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix",
         "https://github.com/qhy991/metax-kernelwiki/tree/403a74a6211755e790886b84eefc45955c9588e6",
-        "https://github.com/qhy991/metax-kernelwiki/tree/0cddd51024fcf00ef9dea2975ac050fd567f9507"
+        "https://github.com/qhy991/metax-kernelwiki/tree/0cddd51024fcf00ef9dea2975ac050fd567f9507",
+        "https://github.com/qhy991/metax-kernelwiki/tree/6fd66b9e6a5ca6794bd233b5a8190aba166d0941"
       ],
-      "result": "data/results/20261008-wmma-prefix.json",
-      "limitations": "Exact WMMA acceptance still fails. Earliest failures apply only to the fixed family/K0..16 scans and are not a global minimum or persistent C00 threshold. Matching snapshots and exact scalar controls do not uniquely assign a hardware, lowering, fragment-load, or arithmetic cause; no performance is accepted."
+      "result": "data/results/20261008-wmma-witness.json",
+      "limitations": "The exact failure persists for the tested sparse two-product input at C[13,2] and C[0,0]. This does not establish general position independence, a global minimum, native instruction behavior or a unique hardware cause. Scalar controls and captured inputs pass; WMMA performance is not accepted."
     }
   ]
 }

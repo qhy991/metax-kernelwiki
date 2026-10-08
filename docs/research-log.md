@@ -79,11 +79,21 @@
 
 全部14个设备worker及3个profiled应用已释放。固定源码在独立checkout通过70项CPU检查，并完成本机MXCC编译和host非法组合负对照；没有向open-cake-ir提升。`a61ea94`固定容量行距结果已按用户明确授权发布，其公有仓库CI已通过；后续同等验证的增量继续发布。
 
-同时核对官方C++指南3.5.3.x的shuffle、integer reduction与同步契约，留存主文和活动版本选择器；这些接口尚未在本库完成C550实测，边界歧义与下一轮范围见[工具链页](toolchain.md#64-lane-collective-的下一轮接口契约)。
+同时核对官方C++指南3.5.3.x的shuffle、integer reduction与同步契约，留存主文和活动版本选择器；当时这些接口尚未在本库完成C550实测，接口依据与后继范围见[工具链页](toolchain.md#64-lane-collective-的接口与实测范围)。
+
+## 2026-10-08：完整wave64的shuffle与整数归约
+
+源码`d01ef59`增加20个边界case：64/128物理线程、逻辑n跨31/32/33、63/64/65和第二wave的95/96/97等边界，另含n0。每个物理线程都执行完整64-bit mask的8种直接shuffle查询与signed-int求和，保存全部9个结果，尾部提供0而不提前退出。
+
+正序20case、独立进程逆序20case和两份单case trace全量通过，累计39744个payload、2688个guards及420个原始事件批次。完整128thread时两个wave的和分别为2080和6176；width32的上半组及第二wave按各自子组寻源，source32/63的取模行为与文档及本机头文件一致。逻辑n65时，补零的thread127仍得到归约值65，说明只检查前n个thread会漏掉有效结果。
+
+[新机制页](../wiki/wave-collectives.md) · [含全部实际整数输出的结果](../data/results/20261008-wave-collectives.json)。两个trace各110个kernel，block64/128分别可见，均报告16regs、shared/private0，重编译标志均false。源helper存在不证明单条硬件指令，保留的完整kernel时间不作intrinsic延迟或吞吐结论。
+
+四个设备worker及两个profiled应用均已退出并验证释放。独立干净源码通过83项CPU检查，本机MXCC编译通过；无设备可见的block32/n32及block64/n65负对照在host拒绝。仍不向open-cake-ir提升。此前`9a23cb8`发布的公有仓库CI已通过。
 
 ## 下一轮问题
 
-- 在完整64/128线程block上验证直接索引shuffle与整数求和，检查所有物理参与lane；逻辑尾部补零，覆盖31/32/33、63/64/65及第二wave边界。
-- 先核对安装头文件的64-bit mask和运行时wave64；不把32-bit截断mask或提前退出作为GPU负对照。
+- 安装头文件同时出现64-bit与32-bit mask参数的整数归约入口；先查清各自源代码合同，再单独比较参数类型是否改变分组。保留本轮完整64-bit mask证据，不能用另一入口结果覆盖它。
+- 对逻辑尾部继续保持物理线程参与，后续负数/浮点或部分mask需要新的明确数值与参与合同。
 - 对dynamic shared的形状差异寻找有定义的资源/计数器证据，不能从请求量除法推断驻留或bank几何。
-- 仍不将某个shape、dtype、SDK的收益扩展为无条件优化规则。
+- 向矩阵编译路线推进前核对实际安装backend与工具链，不从兼容架构号继承硬件能力。

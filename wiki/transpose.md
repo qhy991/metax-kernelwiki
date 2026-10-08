@@ -129,6 +129,6 @@ pitch64使用前4096个slot，pitch65使用4096个slot并到达索引4158，均�
 
 [本轮260个case、2600个原始计时批次与全部检查摘要](../data/results/20261008-dynamic-shared.json)包括57-case扫描、200个确认case及3个trace case，共检查3,646,275,267个payload元素与16,640个guard words，全部通过；这是重复检查次数，不是不同随机输入数量。全部14个设备进程及3个被profile应用均已退出并完成释放观测。
 
-本轮支持将“行距访问”和“launch容量请求”拆开实验；没有估计二者完整交互，也没有把static与dynamic两套源码的绝对差值归因于单一机制。进一步区分资源调度与运行时路径，需要有定义的驻留或性能计数器证据；下一项独立实验先检验[64-lane collective契约](../docs/toolchain.md#64-lane-collective-的下一轮接口契约)。
+本轮支持将“行距访问”和“launch容量请求”拆开实验；没有估计二者完整交互，也没有把static与dynamic两套源码的绝对差值归因于单一机制。进一步区分资源调度与运行时路径，需要有定义的驻留或性能计数器证据；后继独立实验已验证[64-lane collective的有限语义范围](wave-collectives.md)。
 
 [c500-banks]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md

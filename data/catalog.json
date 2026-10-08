@@ -185,6 +185,32 @@
       ],
       "result": "data/results/20261008-dynamic-shared.json",
       "limitations": "同一dynamic kernel拆开请求量与行距，容量响应依赖shape；请求/工具报告不等于物理分配或occupancy，static/dynamic绝对差异仍有代码生成混杂。"
+    },
+    {
+      "id": "c550-wave64-collectives",
+      "title": "C550 wave64：shuffle子组、整数归约与逻辑尾部",
+      "tags": [
+        "wave64",
+        "shuffle",
+        "reduction",
+        "integer",
+        "mask",
+        "subgroup",
+        "warp",
+        "归约",
+        "尾部",
+        "C550"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "local-measurement",
+      "path": "wiki/wave-collectives.md",
+      "sources": [
+        "https://github.com/qhy991/metax-kernelwiki/tree/d01ef59446a2d512ad747989d55938dbf21653dd",
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-shuffle",
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-reduce"
+      ],
+      "result": "data/results/20261008-wave-collectives.json",
+      "limitations": "完整wave64及完整64-bit mask、位置编码非负int32与补零；不覆盖部分参与、其他mask入口/类型、溢出或浮点。全kernel事件时间不是intrinsic延迟或吞吐。"
     }
   ]
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -56,11 +57,21 @@ MAGNITUDE_PATTERNS = {
     for pattern,(q,role) in MAGNITUDE_CASES.items()
 }
 MAGNITUDE_SIGN_BASELINES = {"q12-positive":"positive12-k0", "q12-negative":"negative13-k1", "q12-pair":"pair-pn"}
+SCALE_EXPERIMENT = "wmma-scalar-fp32-scale-control"
+SCALE_SUITE = "scale-control"
+SCALE_Q_VALUES = (6,7,12)
+SCALE_EXPONENTS = (-2,-1,0,1,2)
+SCALE_CASES = {
+    f"q{q:02d}-{'em'+str(-e) if e<0 else 'ep'+str(e) if e>0 else 'e0'}-{role}": (q,e,role)
+    for q in SCALE_Q_VALUES for e in SCALE_EXPONENTS for role in MAGNITUDE_ROLES
+}
+SCALE_PATTERNS = {pattern:MAGNITUDE_PATTERNS[f"q{q:02d}-{role}"] for pattern,(q,e,role) in SCALE_CASES.items()}
 # The closed row0/column0 ordered-pair suites share this implementation.
 ORDERED_PATTERN_SUITES = {
     PRODUCT_SUITE: ("product",PRODUCT_PATTERNS,"isolated-ordered-products",2),
     SIGN_SUITE: ("sign",SIGN_PATTERNS,"isolated-signed-products",3),
     MAGNITUDE_SUITE: ("magnitude",MAGNITUDE_PATTERNS,"isolated-adjacent-magnitudes",4),
+    SCALE_SUITE: ("scale",SCALE_PATTERNS,"isolated-a-power-of-two-scale",5),
 }
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
@@ -71,6 +82,7 @@ WITNESS_COLUMNS = ("id","m","n","k","suite","pattern","target_row","target_col",
 PRODUCT_COLUMNS = WITNESS_COLUMNS
 SIGN_COLUMNS = WITNESS_COLUMNS
 MAGNITUDE_COLUMNS = ("id","m","n","k","suite","pattern","q","role","target_row","target_col","input_rule","order","warmups","samples","launches")
+SCALE_COLUMNS = ("id","m","n","k","suite","pattern","q","scale_exp","role","target_row","target_col","input_rule","order","warmups","samples","launches")
 ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
 SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
@@ -171,12 +183,17 @@ def read_magnitude_plan(path: Path) -> list[dict]:
     return _read_pattern_plan(path,MAGNITUDE_SUITE)
 
 
+def read_scale_plan(path: Path) -> list[dict]:
+    return _read_pattern_plan(path,SCALE_SUITE)
+
+
 def _read_pattern_plan(path: Path, suite: str) -> list[dict]:
     label,maximum,validate={WITNESS_SUITE:("witness",3,validate_witness_case),
                             PRODUCT_SUITE:("product",6,validate_product_case),
                             SIGN_SUITE:("sign",8,validate_sign_case),
-                            MAGNITUDE_SUITE:("magnitude",42,validate_magnitude_case)}[suite]
-    columns=MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS
+                            MAGNITUDE_SUITE:("magnitude",42,validate_magnitude_case),
+                            SCALE_SUITE:("scale",45,validate_scale_case)}[suite]
+    columns=SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS
     with path.open(newline="") as handle:
         reader=csv.DictReader(handle,delimiter="\t")
         if tuple(reader.fieldnames or ())!=columns:
@@ -259,15 +276,22 @@ def validate_magnitude_case(case: dict) -> None:
     _validate_ordered_case(case,MAGNITUDE_SUITE)
 
 
+def validate_scale_case(case: dict) -> None:
+    _validate_ordered_case(case,SCALE_SUITE)
+
+
 def _validate_ordered_case(case: dict, suite: str) -> None:
     label,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
     invalid_binding=suite==MAGNITUDE_SUITE and (type(case.get("q")) is not int
             or (case.get("q"),case.get("role"))!=MAGNITUDE_CASES.get(case.get("pattern")))
+    if suite==SCALE_SUITE:
+        invalid_binding=(type(case.get("q")) is not int or type(case.get("scale_exp")) is not int
+                         or (case.get("q"),case.get("scale_exp"),case.get("role"))!=SCALE_CASES.get(case.get("pattern")))
     if (invalid_binding or case.get("suite")!=suite or case.get("pattern") not in patterns
             or any(type(case.get(field)) is not int for field in ("m","n","k","target_row","target_col"))
             or (case["m"],case["n"],case["k"],case["target_row"],case["target_col"])!=(16,16,2,0,0)
             or case.get("input_rule")!=rule):
-        fields="Shape, q, role, pattern, target or input rule" if suite==MAGNITUDE_SUITE else "Shape, pattern, target or input rule"
+        fields="Shape, q, scale_exp, role, pattern, target or input rule" if suite==SCALE_SUITE else "Shape, q, role, pattern, target or input rule" if suite==MAGNITUDE_SUITE else "Shape, pattern, target or input rule"
         raise ValueError(f"{fields} outside the fixed WMMA {label} cases")
 
 
@@ -283,6 +307,10 @@ def magnitude_cases(order: str = "wmma-first") -> list[dict]:
     return _ordered_cases(MAGNITUDE_SUITE,order)
 
 
+def scale_cases(order: str = "wmma-first") -> list[dict]:
+    return _ordered_cases(SCALE_SUITE,order)
+
+
 def _ordered_cases(suite: str, order: str) -> list[dict]:
     if order not in ORDERS:
         raise ValueError("Unknown WMMA/scalar variant order")
@@ -293,6 +321,9 @@ def _ordered_cases(suite: str, order: str) -> list[dict]:
     if suite==MAGNITUDE_SUITE:
         for case in cases:
             case["q"],case["role"]=MAGNITUDE_CASES[case["pattern"]]
+    if suite==SCALE_SUITE:
+        for case in cases:
+            case["q"],case["scale_exp"],case["role"]=SCALE_CASES[case["pattern"]]
     return cases
 
 
@@ -308,12 +339,17 @@ def magnitude_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
     return _ordered_packed_inputs(case,MAGNITUDE_SUITE)
 
 
+def scale_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
+    return _ordered_packed_inputs(case,SCALE_SUITE)
+
+
 def _ordered_packed_inputs(case: dict, suite: str) -> tuple[list[int],list[int]]:
     _validate_ordered_case(case,suite)
     a,b=[0]*1024,[0]*1024
     left,right=ORDERED_PATTERN_SUITES[suite][1][case["pattern"]]
     for k in range(2):
-        a[k],b[k]=halfword(left[k]),halfword(right[k])
+        a[k]=scaled_halfword(left[k],case["scale_exp"]) if suite==SCALE_SUITE else halfword(left[k])
+        b[k]=halfword(right[k])
     return a,b
 
 
@@ -327,6 +363,10 @@ def validate_sign_inputs(case: dict, a: list[int], b: list[int]) -> dict:
 
 def validate_magnitude_inputs(case: dict, a: list[int], b: list[int]) -> dict:
     return _validate_ordered_inputs(case,a,b,MAGNITUDE_SUITE)
+
+
+def validate_scale_inputs(case: dict, a: list[int], b: list[int]) -> dict:
+    return _validate_ordered_inputs(case,a,b,SCALE_SUITE)
 
 
 def _validate_ordered_inputs(case: dict, a: list[int], b: list[int], suite: str) -> dict:
@@ -351,12 +391,18 @@ def magnitude_reference_output(case: dict) -> list[float]:
     return _ordered_reference_output(case,MAGNITUDE_SUITE)
 
 
+def scale_reference_output(case: dict) -> list[float]:
+    return _ordered_reference_output(case,SCALE_SUITE)
+
+
 def _ordered_reference_output(case: dict, suite: str) -> list[float]:
     """Two logical integer products; no packed-array or kernel indexing is reused."""
     _validate_ordered_case(case,suite)
     left,right=ORDERED_PATTERN_SUITES[suite][1][case["pattern"]]
     result=[0.0]*256
     result[0]=sum(a*b for a,b in zip(left,right))/256
+    if suite==SCALE_SUITE:
+        result[0]=math.ldexp(result[0],case["scale_exp"])
     return result
 
 
@@ -372,16 +418,39 @@ def magnitude_pattern_contracts() -> list[dict]:
     return _ordered_pattern_contracts(MAGNITUDE_SUITE)
 
 
+def scale_pattern_contracts() -> list[dict]:
+    return _ordered_pattern_contracts(SCALE_SUITE)
+
+
+@lru_cache(maxsize=45)
+def _scale_matching_magnitude_pattern(pattern: str) -> str | None:
+    # Compare complete declared buffers, including padding, rather than gating on e==0.
+    _,e,_=SCALE_CASES[pattern]
+    left,right=SCALE_PATTERNS[pattern]
+    a=[scaled_halfword(x,e) for x in left]+[0]*1022
+    b=[halfword(x) for x in right]+[0]*1022
+    matches=[name for name,(old_a,old_b) in MAGNITUDE_PATTERNS.items()
+             if a==[halfword(x) for x in old_a]+[0]*1022 and b==[halfword(x) for x in old_b]+[0]*1022]
+    if len(matches)>1:
+        raise ValueError("Ambiguous declared magnitude input match")
+    return matches[0] if matches else None
+
+
 def _ordered_pattern_contracts(suite: str) -> list[dict]:
     _,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
     result=[]
     for pattern,(left,right) in patterns.items():
+        base_left=left
+        if suite==SCALE_SUITE:
+            q,e,role=SCALE_CASES[pattern]
+            scale_num,scale_den=1<<max(e,0),1<<max(-e,0)
+            left=tuple(value*scale_num for value in base_left)
         products=[a*b for a,b in zip(left,right)]
         row=dict(pattern=pattern,target_row=0,target_col=0,input_rule=rule,
                            k_slots=[0,1],a_numerators=list(left),b_numerators=list(right),product_numerators=products,
                            nonzero_product_k_slots=[k for k,value in enumerate(products) if value!=0],
                  target_reference_numerator=sum(products))
-        if suite in (SIGN_SUITE,MAGNITUDE_SUITE):
+        if suite in (SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE):
             row.update(product_signs=[(value>0)-(value<0) for value in products],
                        product_magnitudes=[abs(value) for value in products])
         if suite==SIGN_SUITE:
@@ -389,6 +458,12 @@ def _ordered_pattern_contracts(suite: str) -> list[dict]:
         if suite==MAGNITUDE_SUITE:
             q,role=MAGNITUDE_CASES[pattern]
             row.update(q=q,role=role,matching_sign_pattern=MAGNITUDE_SIGN_BASELINES.get(pattern))
+        if suite==SCALE_SUITE:
+            row.update(q=q,scale_exp=e,role=role,a_base_numerators=list(base_left),
+                       scale_numerator=scale_num,scale_denominator=scale_den,
+                       a_denominator=16*scale_den,b_denominator=16,product_denominator=256*scale_den,
+                       target_reference_denominator=256*scale_den,
+                       matching_magnitude_pattern=_scale_matching_magnitude_pattern(pattern))
         result.append(row)
     return result
 
@@ -403,6 +478,10 @@ def sign_case_fields(case: dict) -> dict:
 
 def magnitude_case_fields(case: dict) -> dict:
     return _ordered_case_fields(case,MAGNITUDE_SUITE)
+
+
+def scale_case_fields(case: dict) -> dict:
+    return _ordered_case_fields(case,SCALE_SUITE)
 
 
 def _ordered_case_fields(case: dict, suite: str) -> dict:
@@ -435,13 +514,31 @@ def magnitude_protocol_metadata() -> dict:
                 baseline_scope="matching_sign_pattern identifies a declared equal operand contract, not a new device comparison")
 
 
+def scale_protocol_metadata() -> dict:
+    return dict(witness_mode=5,suite=SCALE_SUITE,scale_patterns=scale_pattern_contracts(),
+                logical_shape=[16,16,2],maximum_cases=45,base_input_denominator=16,b_denominator=16,
+                q_values=list(SCALE_Q_VALUES),scale_exponents=list(SCALE_EXPONENTS),roles=list(MAGNITUDE_ROLES),
+                scale_rule="only A is multiplied by 2^scale_exp from its base numerator/16; B is unchanged; all other input words are positive zero",
+                reference_rule="target_reference_numerator/target_reference_denominator; all other outputs are zero",
+                standalone_inactive_slot_policy="both A and B are positive zero at the inactive K slot",
+                baseline_scope="matching_magnitude_pattern compares complete declared operand words, including cross-scale matches; actual historical equality must be checked separately")
+
+
 def _ordered_protocol_metadata(suite: str) -> dict:
     return {PRODUCT_SUITE:product_protocol_metadata,SIGN_SUITE:sign_protocol_metadata,
-            MAGNITUDE_SUITE:magnitude_protocol_metadata}[suite]()
+            MAGNITUDE_SUITE:magnitude_protocol_metadata,SCALE_SUITE:scale_protocol_metadata}[suite]()
 
 
 def halfword(numerator: int) -> int:
     return struct.unpack("<H",struct.pack("<e",numerator / 16))[0]
+
+
+def scaled_halfword(numerator: int, scale_exp: int) -> int:
+    """New bounded dyadic contract; the old integer-sixteenth encoder is unchanged."""
+    if (type(numerator) is not int or not -15<=numerator<=15
+            or type(scale_exp) is not int or scale_exp not in SCALE_EXPONENTS):
+        raise ValueError("Scaled FP16 input outside the fixed dyadic contract")
+    return struct.unpack("<H",struct.pack("<e",math.ldexp(numerator/16,scale_exp)))[0]
 
 
 def packed_inputs(case: dict, *, prefix: bool = False) -> tuple[list[int],list[int]]:
@@ -518,7 +615,7 @@ def oracle_metadata() -> dict:
 
 
 def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -> dict:
-    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or prefix):
+    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE) or prefix):
         raise ValueError("Unknown or incompatible paired control suite")
     result = {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
             "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
@@ -545,11 +642,15 @@ def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -
     if suite in ORDERED_PATTERN_SUITES:
         result.pop("a_rule");result.pop("b_rule")
         protocol=_ordered_protocol_metadata(suite)
-        experiment={PRODUCT_SUITE:PRODUCT_EXPERIMENT,SIGN_SUITE:SIGN_EXPERIMENT,MAGNITUDE_SUITE:MAGNITUDE_EXPERIMENT}[suite]
+        experiment={PRODUCT_SUITE:PRODUCT_EXPERIMENT,SIGN_SUITE:SIGN_EXPERIMENT,MAGNITUDE_SUITE:MAGNITUDE_EXPERIMENT,SCALE_SUITE:SCALE_EXPERIMENT}[suite]
         result.update(experiment=experiment,**protocol,
                       reference="only C00 is the sum of the two declared integer products/256; all other outputs are zero",
                       target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping",
                       k_slot_scope="declared logical K positions; no native accumulation-order assertion")
+        if suite==SCALE_SUITE:
+            for field in ("input_scale_denominator","output_scale_denominator","accumulator_prefix_numerator_bound"):
+                result.pop(field)
+            result.update(reference="independent logical integer products times exact power-of-two A scale; exact target rational metadata; no packed-input multiplication")
     return result
 
 
@@ -568,7 +669,7 @@ def prefix_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
-    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or (suite=="default" and order is not None):
+    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE) or (suite=="default" and order is not None):
         raise ValueError("Order is only supported by paired control suites")
     prefix = suite==PREFIX_SUITE
     witness = suite==WITNESS_SUITE
@@ -584,7 +685,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        columns=MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
+        columns=SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
         writer=csv.DictWriter(handle,fieldnames=columns,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
@@ -602,7 +703,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
 
 def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None = None) -> None:
     if suite is not None:
-        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE) or prefix:
+        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE) or prefix:
             raise ValueError("Unknown or incompatible paired control suite")
         if suite in ORDERED_PATTERN_SUITES:
             _validate_ordered_case(case,suite)
@@ -932,11 +1033,15 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
         result.update(suite=WITNESS_SUITE,patterns=witness_pattern_contracts(),maximum_cases=3)
     if suite in ORDERED_PATTERN_SUITES:
         result.update(suite=suite,patterns=_ordered_pattern_contracts(suite),maximum_cases=len(ORDERED_PATTERN_SUITES[suite][1]))
+    if suite==SCALE_SUITE:
+        result["tested_contract"]="same packed operands at before/between/after snapshots; both full256 FP32 outputs finite and exact to the declared dyadic rational reference, signed zeros equivalent; all guards intact"
     return result
 
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata(suite=SCALE_SUITE):
+        return check_control(input_directory,output_directory,suite=SCALE_SUITE)
     if oracle==control_oracle_metadata(suite=MAGNITUDE_SUITE):
         return check_control(input_directory,output_directory,suite=MAGNITUDE_SUITE)
     if oracle==control_oracle_metadata(suite=SIGN_SUITE):
@@ -981,7 +1086,7 @@ def main() -> int:
     commands=parser.add_subparsers(dest="command",required=True)
     preparation=commands.add_parser("prepare")
     preparation.add_argument("directory",type=Path)
-    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE),default="default")
+    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE),default="default")
     preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)

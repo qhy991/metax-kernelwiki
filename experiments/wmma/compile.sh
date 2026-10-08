@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# -ne 1 ]]; then
-    echo "Usage: C550_ARCH=<observed compiler arch> [C550_WMMA_CONTROL=0|1] [C550_WMMA_PREFIX=0|1] [C550_WMMA_WITNESS=0|1|2|3|4] compile.sh OUTPUT_BINARY" >&2
+    echo "Usage: C550_ARCH=<observed compiler arch> [C550_WMMA_CONTROL=0|1] [C550_WMMA_PREFIX=0|1] [C550_WMMA_WITNESS=0|1|2|3|4|5] compile.sh OUTPUT_BINARY" >&2
     exit 2
 fi
 probe_control="${C550_WMMA_CONTROL-0}"
@@ -20,8 +20,8 @@ if [[ "$probe_prefix" == 1 && "$probe_control" != 1 ]]; then
 fi
 probe_witness="${C550_WMMA_WITNESS-0}"
 case "$probe_witness" in
-    0|1|2|3|4) ;;
-    *) echo "C550_WMMA_WITNESS must be 0, 1, 2, 3 or 4" >&2; exit 2 ;;
+    0|1|2|3|4|5) ;;
+    *) echo "C550_WMMA_WITNESS must be 0, 1, 2, 3, 4 or 5" >&2; exit 2 ;;
 esac
 if [[ "$probe_witness" != 0 && ( "$probe_control" != 1 || "$probe_prefix" != 0 ) ]]; then
     echo "C550_WMMA_WITNESS=$probe_witness requires C550_WMMA_CONTROL=1 and C550_WMMA_PREFIX=0" >&2

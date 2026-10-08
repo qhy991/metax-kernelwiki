@@ -371,7 +371,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 `C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
-successor modes `2`, `3` and `4` select only the separate product, sign and magnitude suites
+successor modes `2`, `3`, `4` and `5` select only the separate product, sign, magnitude and scale suites
 below. All nonzero modes require paired control and prefix mode zero; the compile script
 and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
@@ -441,12 +441,12 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-product-probe
 ```
 
-The compile flag is the closed enum `0|1|2|3|4`: zero preserves the original
+The compile flag is the closed enum `0|1|2|3|4|5`: zero preserves the original
 non-pattern modes, one admits only `witness-control`, two admits only
-`product-control`, three admits only `sign-control`, and four admits only
-`magnitude-control` below. Mode 2 is a deliberate successor contract; it is not an
+`product-control`, three admits only `sign-control`, four admits only
+`magnitude-control`, and five admits only `scale-control` below. Mode 2 is a deliberate successor contract; it is not an
 extension to the patterns accepted by mode 1. Values outside that enum fail
-before compilation. Modes 1 through 4 require `C550_WMMA_CONTROL=1` and
+before compilation. Modes 1 through 5 require `C550_WMMA_CONTROL=1` and
 `C550_WMMA_PREFIX=0`.
 
 Products reuse the witness TSV column names, but `suite=product-control` and
@@ -531,7 +531,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 
 Mode 3 is an explicit successor contract and admits only `sign-control` with
 `input_rule=isolated-signed-products`. Successor mode 4 selects the separate
-magnitude suite below; values outside 0 through 4 are invalid. Existing modes
+magnitude suite below; values outside 0 through 5 are invalid. Existing modes
 0, 1 and 2 retain their own suite and pattern admission. The sign TSV uses the existing
 pattern columns; shared column names do not permit cross-suite rows. Sign
 plans contain one to eight distinct patterns. The ninth row is refused before
@@ -605,7 +605,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-magnitude-probe
 ```
 
-Mode 4 admits only `magnitude-control`; mode 5 is invalid. Its exact TSV columns
+Mode 4 admits only `magnitude-control`; successor mode 5 selects the separate scale suite below, and mode 6 is invalid. Its exact TSV columns
 are `id, m, n, k, suite, pattern, q, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). q and role must match the closed pattern name, target `(0,0)`
 and `input_rule=isolated-adjacent-magnitudes`. The new header makes q and role
@@ -652,3 +652,112 @@ integer references, range and role refusals, explicit null and deep types,
 known baselines, factorization, inactive operands, guards, snapshots, both
 orders and complete numerical failures. Synthetic CPU outputs are not C550
 measurement evidence.
+
+## Explicit exact-dyadic A-scale suite
+
+`prepare --suite scale-control` fixes `M=N=16, K=2, C[0,0]` and admits the full
+45-condition grid: q in `(6,7,12)`, `scale_exp` e in `(-2,-1,0,1,2)`, and role
+in `(positive,negative,pair)`. The base A pair `[-q,1]/16` is multiplied by
+`2^e`; B remains `[-1,-(q+1)]/16`. Standalone roles zero both operands in their
+inactive K slot. Only A row 0 and B column 0 can contain nonzero values.
+
+| Role | Active A values | B values | Exact C00 reference |
+| --- | --- | --- | --- |
+| `positive` | `[-q × 2^e /16, 0]` | `[-1/16, 0]` | `q × 2^e /256` |
+| `negative` | `[0, 2^e /16]` | `[0, -(q+1)/16]` | `-(q+1) × 2^e /256` |
+| `pair` | `[-q × 2^e /16, 2^e /16]` | `[-1/16, -(q+1)/16]` | `-2^e /256` |
+
+All remaining operand words are positive zero. Every output is checked, with
+all 255 non-target outputs required to be finite numerical zero. Scaling is an
+exact dyadic input contract: negative exponents retain fractional sixteenths,
+and are never truncated to integer numerators over 16. Python preparation uses
+an exact power-of-two multiplication before binary16 packing. The new native
+host validator adjusts the normal binary16 exponent bits of the already exact
+base value. Every admitted nonzero value remains finite and normal, including
+`1/64` and `-3`. The old `sixteenth_bits` function and older packing contracts
+are unchanged. This host-encoding statement does not prescribe WMMA arithmetic.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-scale-input \
+  --suite scale-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=5 \
+  bash experiments/wmma/compile.sh /tmp/wmma-scale-probe
+```
+
+Mode 5 admits only `scale-control`; mode 6 is invalid. Modes 0 through 4 retain
+their existing suites. The new exact TSV columns are
+`id, m, n, k, suite, pattern, q, scale_exp, role, target_row, target_col, input_rule, order, warmups, samples, launches`
+(tab-separated), with `input_rule=isolated-a-power-of-two-scale`. The default
+order is q ascending, then e ascending, then positive/negative/pair. Exponent
+tags are `em2`, `em1`, `e0`, `ep1` and `ep2`: for example pattern
+`q06-em2-positive` has case ID `scale_q06_em2_positive`. q, integer e and role
+must match the closed pattern entry. A 46th row is refused before loading its
+inputs. Both kernel orders, explicit case reordering and selected subsets are
+supported; subsets establish no full-grid coverage.
+
+The 45 parameter conditions contain **41 distinct complete A/B input pairs**.
+Four positive-control aliases connect `(q=6,e=-1,0,1,2)` respectively to
+`(q=12,e=-2,-1,0,1)`. Their complete input buffers are equal. All planned
+conditions remain present and independently recorded; the aliases are not
+deduplicated or counted as distinct input data.
+
+The experiment label is `wmma-scalar-fp32-scale-control`. Every pattern,
+logical-case, variant and snapshot binds q, e, role and exact rational metadata:
+
+- `a_base_numerators` describes the unscaled A numerator pair;
+- `scale_numerator=2^max(e,0)` and `scale_denominator=2^max(-e,0)` describe the A multiplier;
+- `a_numerators` is the base pair multiplied by `scale_numerator`, and
+  `a_denominator=16 × scale_denominator`;
+- `b_numerators` is unchanged and `b_denominator=16`;
+- `product_numerators` multiplies the integer A and B numerators, and
+  `product_denominator=256 × scale_denominator`;
+- `target_reference_numerator` is their integer sum, with
+  `target_reference_denominator=product_denominator`.
+
+Thus numerator metadata can exceed the old encoder's base range without
+changing that encoder: the native scale validator separately consumes the base
+numerator and exponent. Negative e uses a larger denominator, not a rounded
+integer. Product signs, numerator magnitudes and occupied K slots remain
+explicit. The scale oracle omits the old global input/output denominator
+fields, using `base_input_denominator=16` and each pattern's rational fields.
+All integer and vector metadata is type-sensitive.
+
+`matching_magnitude_pattern` is required, including explicit null when no old
+input matches. Complete declared operand words, including padding, are compared
+against all 42 earlier magnitude patterns. Fourteen conditions match: all nine
+e=0 conditions, plus these five positive controls:
+
+| Scale condition | Earlier magnitude pattern |
+| --- | --- |
+| `q06-em1-positive` | `q03-positive` |
+| `q06-ep1-positive` | `q12-positive` |
+| `q07-ep1-positive` | `q14-positive` |
+| `q12-em2-positive` | `q03-positive` |
+| `q12-em1-positive` | `q06-positive` |
+
+There are no further full-input matches for negative or paired roles. These
+are declared input relationships; a historical device comparison must compare
+the actual complete retained operands and outputs separately. Neither matching
+shape nor e=0 alone is an adequate historical identity test.
+
+Both kernel bodies and the launch helper remain unchanged. Physical tile size,
+full padded K16 execution, buffer roles, 64 guards per output side, three input
+snapshots and the finite exact comparison policy are retained. One complete
+45-condition order checks 23,040 payload words, 11,520 guards, 92,160 prepared
+halfwords and 276,480 snapshot halfwords. It retains 900 timed batches and
+executes 9,900 kernel launches including warmups. Failures remain diagnostic
+failures, with `performance_accepted=false` and no tolerance change.
+
+The experiment changes A's exponent while holding B and the declared q/role
+condition fixed. Any numerical scale dependence is bounded to these operands
+and this execution path; it does not identify internal precision, instruction
+selection, rounding or accumulation order, nor establish behavior for arbitrary
+scales. Individual and paired results remain separate observations.
+
+`tests/test_wmma_scales.py` checks all 45 complete packed inputs and references
+against independent `Fraction` arithmetic and binary16 conversion, input support,
+all 41 distinct input pairs, full-word historical matching, typed rational
+metadata and null bindings. It also checks wrong operand scaling, negative-e
+truncation, factorization changes, guards, snapshots and complete mixed numerical
+failures. These CPU tests use synthetic outputs, not new C550 measurements.

@@ -14,7 +14,15 @@
 
 namespace {
 constexpr unsigned kInputWords = 1024, kOutputWords = 384, kGuardWords = 64;
-constexpr size_t kImageBytes = 18232;
+constexpr size_t kNativeImageBytes = 18232, kBundleImageBytes = 15324;
+struct BundleEntry {
+    const char* target;
+    uint64_t offset, size;
+};
+constexpr BundleEntry kBundleEntries[] = {
+    {"host-x86_64-unknown-linux-gnu", 4096, 0},
+    {"maca-mxc-metax-macahca--xcore1000-bc", 4096, 11216}
+};
 constexpr const char* kSymbols[] = {
     "_ZN12_GLOBAL__N_116wmma_tile_kernelEPK6__halfS2_Pfj",
     "_ZN12_GLOBAL__N_118scalar_tile_kernelEPK6__halfS2_Pfj"
@@ -73,18 +81,65 @@ void launch_once(mcFunction_t function, bool scalar, void* a, void* b, float* ou
     MC_CHECK(mcDeviceSynchronize());
 }
 
-std::vector<uint8_t> read_image(const std::string& path) {
+// Only fixed, in-range offsets and widths are used after checking the file size.
+uint64_t fixed_little_endian(const std::vector<uint8_t>& bytes, size_t offset, unsigned width) {
+    uint64_t value = 0;
+    for (unsigned index = 0; index < width; ++index)
+        value |= static_cast<uint64_t>(bytes[offset + index]) << (8 * index);
+    return value;
+}
+
+void validate_bundle(const std::vector<uint8_t>& bytes) {
+    const char* error = "Module image must be the retained two-entry xcore1000 bitcode bundle";
+    if (std::string(reinterpret_cast<const char*>(bytes.data()), 24) != "__CLANG_OFFLOAD_BUNDLE__" ||
+        fixed_little_endian(bytes, 24, 8) != 2)
+        throw std::runtime_error(error);
+    size_t position = 32;
+    for (const auto& entry : kBundleEntries) {
+        const std::string target(entry.target);
+        if (fixed_little_endian(bytes, position, 8) != entry.offset ||
+            fixed_little_endian(bytes, position + 8, 8) != entry.size ||
+            fixed_little_endian(bytes, position + 16, 8) != target.size() ||
+            std::string(reinterpret_cast<const char*>(bytes.data() + position + 24), target.size()) != target)
+            throw std::runtime_error(error);
+        position += 24 + target.size();
+    }
+    if (position != 145) throw std::runtime_error(error);
+    for (size_t index = position; index < 4096; ++index)
+        if (bytes[index] != 0) throw std::runtime_error(error);
+    // The payload is the original wrapped bitcode, with its 20-byte wrapper and
+    // 12 trailing zero bytes. It is not an arbitrary IR input or native fallback.
+    if (fixed_little_endian(bytes, 4096, 4) != 0x0b17c0de ||
+        fixed_little_endian(bytes, 4100, 4) != 0 ||
+        fixed_little_endian(bytes, 4104, 4) != 20 ||
+        fixed_little_endian(bytes, 4108, 4) != 11184 ||
+        fixed_little_endian(bytes, 4112, 4) != 255 ||
+        bytes[4116] != 'B' || bytes[4117] != 'C' || bytes[4118] != 0xc0 || bytes[4119] != 0xde)
+        throw std::runtime_error(error);
+    for (size_t index = 15300; index < 15312; ++index)
+        if (bytes[index] != 0) throw std::runtime_error(error);
+    if (std::string(reinterpret_cast<const char*>(bytes.data() + 15312), 12) != "__FILE_END__")
+        throw std::runtime_error(error);
+}
+
+std::vector<uint8_t> read_image(const std::string& path, const std::string& kind) {
+    const bool native = kind == "native-elf";
+    const size_t image_bytes = native ? kNativeImageBytes : kBundleImageBytes;
     std::ifstream image(path, std::ios::binary | std::ios::ate);
     if (!image) throw std::runtime_error("Cannot read module image");
-    if (image.tellg() != static_cast<std::streamoff>(kImageBytes))
-        throw std::runtime_error("Module image must contain exactly 18232 bytes");
-    std::vector<uint8_t> bytes(kImageBytes);
+    if (image.tellg() != static_cast<std::streamoff>(image_bytes))
+        throw std::runtime_error("Module image must contain exactly " + std::to_string(image_bytes) + " bytes");
+    std::vector<uint8_t> bytes(image_bytes);
     image.seekg(0);
     image.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
     if (!image || image.peek() != std::char_traits<char>::eof())
         throw std::runtime_error("Cannot read module image");
-    // This is a bounded admission check for the retained image, not an ELF verifier.
-    // The external checker compares every byte against the expected retained ELF.
+    // These are bounded structural checks. The external CPU checker compares the
+    // complete image (and the bundle payload) against separate retained references.
+    if (!native) {
+        validate_bundle(bytes);
+        return bytes;
+    }
     if (bytes[0] != 0x7f || bytes[1] != 'E' || bytes[2] != 'L' || bytes[3] != 'F' ||
         bytes[4] != 2 || bytes[5] != 1 || bytes[6] != 1 ||
         bytes[16] != 3 || bytes[17] != 0 || bytes[18] != 253 || bytes[19] != 0 ||
@@ -126,17 +181,20 @@ void retain_snapshot(const std::string& directory, const std::string& order, con
     flush_record(records);
 }
 
-void collect(const std::string& order, const std::string& image_path, const std::string& directory) {
+void collect(const std::string& order, const std::string& kind, const std::string& image_path,
+             const std::string& directory) {
     if (order != "wmma-first" && order != "scalar-first")
         throw std::runtime_error("Order must be wmma-first or scalar-first");
+    if (kind != "native-elf" && kind != "retained-bitcode-bundle")
+        throw std::runtime_error("Image kind must be native-elf or retained-bitcode-bundle");
     if (!std::filesystem::is_directory(directory) || !std::filesystem::is_empty(directory))
         throw std::runtime_error("Output directory must already exist and be empty");
     const uint16_t endian = 1;
     if (*reinterpret_cast<const uint8_t*>(&endian) != 1)
         throw std::runtime_error("Requires a little-endian host");
 
-    const std::vector<uint8_t> image = read_image(image_path);
-    write_words(directory, "loaded-image.elf", image);
+    const std::vector<uint8_t> image = read_image(image_path, kind);
+    write_words(directory, "loaded-image.bin", image);
 
     // Fixed raw words; no arithmetic-based or observed-output-based input generation.
     std::vector<uint16_t> a(kInputWords, 0), b(kInputWords, 0);
@@ -171,8 +229,21 @@ void collect(const std::string& order, const std::string& image_path, const std:
 
     mcModule_t module = nullptr;
     MC_CHECK(mcModuleLoadData(&module, image.data()));
-    records << "{\"type\":\"module\",\"image_file\":\"loaded-image.elf\",\"image_bytes\":18232,"
-               "\"image_format\":\"ELF64LE\",\"machine_raw\":253,\"load_api\":\"mcModuleLoadData\","
+    records << "{\"type\":\"module\",\"image_file\":\"loaded-image.bin\",\"image_kind\":" << json_string(kind)
+            << ",\"image_bytes\":" << image.size();
+    if (kind == "native-elf") {
+        records << ",\"image_format\":\"ELF64LE\",\"machine_raw\":253";
+    } else {
+        records << ",\"image_format\":\"CLANG_OFFLOAD_BUNDLE\",\"bundle_entries\":[";
+        for (unsigned index = 0; index < 2; ++index) {
+            const auto& entry = kBundleEntries[index];
+            if (index) records << ',';
+            records << "{\"target\":" << json_string(entry.target)
+                    << ",\"offset\":" << entry.offset << ",\"size\":" << entry.size << '}';
+        }
+        records << "],\"wrapped_bitcode_bytes\":11216,\"inner_bitcode_bytes\":11184";
+    }
+    records << ",\"load_api\":\"mcModuleLoadData\","
                "\"launch_api\":\"mcModuleLaunchKernel\",\"argument_interface\":\"kernelParams\","
                "\"extra_is_null\":true,\"symbols\":{\"wmma\":" << json_string(kSymbols[0])
             << ",\"scalar\":" << json_string(kSymbols[1]) << "},\"module_loaded\":true}";
@@ -182,7 +253,8 @@ void collect(const std::string& order, const std::string& image_path, const std:
         MC_CHECK(mcModuleGetFunction(&functions[slot], module, kSymbols[slot]));
 
     const char* variants[] = {order == "wmma-first" ? "wmma" : "scalar", order == "wmma-first" ? "scalar" : "wmma"};
-    records << "{\"type\":\"protocol\",\"schema\":\"metax-kernelwiki.wmma-module-q7.v1\",\"order\":" << json_string(order)
+    records << "{\"type\":\"protocol\",\"schema\":\"metax-kernelwiki.wmma-module-q7.v2\",\"order\":" << json_string(order)
+            << ",\"image_kind\":" << json_string(kind)
             << ",\"variant_order\":[" << json_string(variants[0]) << ',' << json_string(variants[1]) << "],"
                "\"logical_shape\":[16,16,2],\"tile\":[16,16,16],\"packed_chunks\":4,\"k_chunks\":1,"
                "\"operand_halfwords_each\":1024,\"input_words_prefix\":{\"a\":[46848,11264],\"b\":[44032,47104]},"
@@ -193,8 +265,8 @@ void collect(const std::string& order, const std::string& image_path, const std:
                "\"initial_payload_uint32\":4294967295,\"launches_per_variant\":1,\"total_launches\":2,\"warmups\":0,"
                "\"input_rewrite_between_variants\":false,\"snapshot_phases\":[\"before\",\"between\",\"after\"],"
                "\"comparison\":\"all 256 outputs finite and numerically exact; signed zeros equivalent; no tolerance\",\"environment\":{";
-    const char* environment[] = {"MACA_LAUNCH_MODE", "MACA_LAUNCH_BLOCKING", "MACA_DIRECT_DISPATCH", "MACA_CACHE_PATH", "MACA_CACHE_DISABLE"};
-    for (unsigned index = 0; index < 5; ++index) {
+    const char* environment[] = {"MACA_LAUNCH_MODE", "MACA_LAUNCH_BLOCKING", "MACA_DIRECT_DISPATCH", "MACA_CACHE_PATH", "MACA_CACHE_DISABLE", "MACA_MODULE_LOADING"};
+    for (unsigned index = 0; index < 6; ++index) {
         if (index) records << ',';
         records << json_string(environment[index]) << ':' << environment_value(environment[index]);
     }
@@ -246,6 +318,7 @@ void collect(const std::string& order, const std::string& image_path, const std:
     MC_CHECK(mcDeviceSynchronize());
     MC_CHECK(mcModuleUnload(module));
     records << "{\"type\":\"complete\",\"order\":" << json_string(order)
+            << ",\"image_kind\":" << json_string(kind)
             << ",\"variant_count\":2,\"total_launches\":2,\"outputs_retained\":true,\"device_buffers_freed\":true,\"module_unloaded\":true,\"cpu_correctness_checked\":false}";
     flush_record(records);
     records.close();
@@ -254,12 +327,12 @@ void collect(const std::string& order, const std::string& image_path, const std:
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 5 || std::string(argv[1]) != "--run") {
-        std::cerr << "Usage: repro --run {wmma-first|scalar-first} MODULE_ELF FRESH_EMPTY_OUTPUT_DIRECTORY\n";
+    if (argc != 6 || std::string(argv[1]) != "--run") {
+        std::cerr << "Usage: repro --run {wmma-first|scalar-first} {native-elf|retained-bitcode-bundle} IMAGE FRESH_EMPTY_OUTPUT_DIRECTORY\n";
         return 2;
     }
     try {
-        collect(argv[2], argv[3], argv[4]);
+        collect(argv[2], argv[3], argv[4], argv[5]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "{\"type\":\"error\",\"message\":" << json_string(error.what()) << "}\n";

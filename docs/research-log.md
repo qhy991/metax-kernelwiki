@@ -101,9 +101,20 @@
 
 全部5个device worker及2个profiled应用已退出。干净源码89项CPU检查通过，两个模式本机编译及4个无设备host负对照通过。第一次摘要采集遗漏空目录，严格投影因此拒绝；后继只读归档保留远端原始空目录后通过，未改实验或补造目录状态。仍不向open-cake-ir提升。之前`1f6a50a`的公有仓库CI已通过。
 
+## 2026-10-08：原生WMMA的精确性反例
+
+系统Python没有torch/triton并不代表整机没有框架环境。只读核实了现有containerd容器的包元数据：Torch2.10.0、Triton3.6.0及maca-tile1.0.1均带metax3.8.0.4.c600u后缀；未导入框架或执行其GPU路径。这与本轮宿主MACA3.5.3环境分开记录，不继承执行资格。
+
+源码`ef22b51`用当前SDK原生header的mxmaca::wmma执行FP16输入、float累加的16×16×16操作，多K块均匀循环并验证尾部padding。实际编译及两个host负对照通过，干净源码102项CPU检查通过；但设备首次12case中10case没有满足预先固定的exact合同，共177个数值不等，最大绝对残差4.76837158203125e-7。输入正确、输出全有限、guards完整。原逆序与性能trace门禁保持未通过，未启动。
+
+独立诊断用同一留存binary和输入重复K16两次、K64一次，另取K16资源trace，完整输出位均与首次对应case一致；原strict checker继续返回失败。对全部16个实际case的独立诊断包含32768个input halfwords、4096个C值、2048个guards，共277个不等值。逐步正确舍入的FP32 CPU replay仍精确匹配整数dot/256参考，普通求和重排不足以解释差异。
+
+[数值诊断页](../wiki/wmma-exactness.md) · [保留failed状态的完整记录](../data/results/20261008-wmma-exact-diagnostic.json)。官方WMMA章节未给出严格IEEE逐步FP32舍入契约；原因未定位，不能直接称硬件缺陷。记录为device-correctness、passed=false、performance_accepted=false。索引新增明确的正确性诊断入口，原local-measurement性能门槛仍要求passed=true，oracle和容差未改。
+
+五个device worker及一个profiled应用已退出并验证释放。诊断trace110kernel、28regs/shared0/private0、recompiled false110；没有由此推导算术机制或性能。本轮不向open-cake-ir提升。此前`4aa7d4a`公有仓库CI已通过。
+
 ## 下一轮问题
 
-- 转向实际安装的矩阵编译路线：CPU阶段核对Python包/backend源码、原生编译目标和offline编译接口，不能从Triton兼容架构号继承硬件能力。
-- 为首个小型矩阵kernel固定输入、累加精度、外部oracle和误差合同；编译与输入准备先于设备分配。
-- 稀疏mask、负数或浮点仍是独立问题，不扩展当前两个完整typed mask的验证范围。
-- dynamic shared形状差异仍需有定义的资源/计数器证据；不从请求量除法推断驻留或bank几何。
+- 在后继源码中保存device A/B输入回读，并加入同packed数据的标量FP32 GPU对照，区分传输/存储与WMMA路径；不修改原失败及强exact oracle。
+- 所有新增数值模式保持独立合同和失败记录，先解释残差，再讨论应用容差或性能。
+- 新容器中的Triton路线目前只有包身份观察，仍需核对实际backend与native目标并离线编译；不从兼容架构号继承硬件能力。

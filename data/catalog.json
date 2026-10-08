@@ -215,6 +215,31 @@
       ],
       "result": "data/results/20261008-mask-overloads.json",
       "limitations": "两种完整typed mask在当前SDK分别对应64/32元素语义组，物理wave仍64；类型与mask数值同时改变，不是type-only因果或同算子速度比较。不覆盖稀疏mask、溢出或浮点。"
+    },
+    {
+      "id": "c550-wmma-exactness",
+      "title": "C550原生WMMA：精确合同失败与可复现数值残差",
+      "tags": [
+        "WMMA",
+        "matrix",
+        "FP16",
+        "FP32",
+        "accuracy",
+        "rounding",
+        "精度",
+        "矩阵",
+        "诊断",
+        "C550"
+      ],
+      "confidence": "locally-measured",
+      "evidence_scope": "device-correctness",
+      "path": "wiki/wmma-exactness.md",
+      "sources": [
+        "https://github.com/qhy991/metax-kernelwiki/tree/ef22b51a416b4abf741494576a6402e8a50b2386",
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix"
+      ],
+      "result": "data/results/20261008-wmma-exact-diagnostic.json",
+      "limitations": "原严格exact合同失败，性能不接受。小型预打包FP16矩阵及floatfragment的一组数据；机制未定位，不能直接归责硬件或把观察上界当通用容差。"
     }
   ]
 }

@@ -28,15 +28,35 @@ def validate(catalog):
             errors.append(f"{ident}: invalid page path")
         if row.get("confidence") == "locally-measured":
             result = ROOT / row.get("result", "")
-            if row.get("evidence_scope") != "local-measurement" or not result.is_file():
+            scope = row.get("evidence_scope")
+            if scope not in {"local-measurement", "device-correctness"} or not result.is_file():
                 errors.append(f"{ident}: local measurement requires result and scope")
             else:
                 data = json.loads(result.read_text())
+                if not isinstance(data, dict):
+                    errors.append(f"{ident}: result must be an object")
+                    continue
                 for key in ("run_id", "source_commit", "device", "environment", "correctness", "measurement", "limitations"):
                     if not data.get(key):
                         errors.append(f"{ident}: result missing {key}")
-                if data.get("correctness", {}).get("passed") is not True:
+                correctness = data.get("correctness")
+                correctness = correctness if isinstance(correctness, dict) else {}
+                if scope == "local-measurement" and correctness.get("passed") is not True:
                     errors.append(f"{ident}: measured entry needs passing full-output check")
+                elif scope == "device-correctness":
+                    if data.get("evidence_scope") != "device-correctness":
+                        errors.append(f"{ident}: diagnostic result scope must match device-correctness")
+                    if type(correctness.get("passed")) is not bool:
+                        errors.append(f"{ident}: diagnostic correctness.passed must be a boolean")
+                    tested_contract = correctness.get("tested_contract")
+                    if not isinstance(tested_contract, str) or not tested_contract.strip():
+                        errors.append(f"{ident}: diagnostic result needs a tested contract")
+                    measurement = data.get("measurement")
+                    measurement = measurement if isinstance(measurement, dict) else {}
+                    if measurement.get("purpose") != "correctness_diagnostic":
+                        errors.append(f"{ident}: diagnostic measurement purpose must be correctness_diagnostic")
+                    if measurement.get("performance_accepted") is not False:
+                        errors.append(f"{ident}: diagnostic performance_accepted must be false")
     return errors
 
 

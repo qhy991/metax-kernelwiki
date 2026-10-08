@@ -82,7 +82,12 @@ copy 的有效带宽按预先定义的逻辑字节量计算。若每个有效元
 
 ## 本地维护验收
 
-提交前运行 `python3 scripts/wiki.py validate`。当前校验器检查 catalog schema、唯一 ID、必需字段、证据标签及页面路径；`locally-measured` 条目还需要 `local-measurement` 范围、存在的结果文件、必需的结果字段和通过的完整输出正确性检查。
+提交前运行 `python3 scripts/wiki.py validate`。当前校验器检查 catalog schema、唯一 ID、必需字段、证据标签及页面路径。`locally-measured` 表明观测来自本机，其结果必须存在并包含运行、源码、设备、环境、正确性、测量和限制字段。以下两种范围分别准入：
+
+- `local-measurement` 保留性能证据的严格门槛：完整输出检查的 `correctness.passed` 必须为布尔值 `true`。诊断标记不能让失败结果通过这一门槛。
+- `device-correctness` 可以记录直接测得的正确性通过或失败：结果自身的 `evidence_scope` 必须同为 `device-correctness`，`correctness.passed` 必须为实际布尔值，并用非空 `correctness.tested_contract` 明示检验的合同。同时要求 `measurement.purpose="correctness_diagnostic"` 和 `measurement.performance_accepted=false`；其中的计时记录不被接纳为性能结论。
+
+因此，明确违反原合同的设备输出可以成为本地实测的负面知识。原结果仍是失败，原 oracle 和容差仍有效；为索引诊断记录而改变证据分类不意味着数值验收通过，也不授权调整容差或复用失败运行的性能数据。
 
 对受影响条目执行实际的 `search` 与 `show`，例如 `python3 scripts/wiki.py search timing` 和 `python3 scripts/wiki.py show maca-event-timing`。由维护者核对来源支持、正文与结果一致性、编译记录是否误带速度声明，以及配对比较是否缺少 baseline；这些人工检查不记成校验器已经实现的能力。
 

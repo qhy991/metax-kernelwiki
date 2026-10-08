@@ -55,6 +55,12 @@ export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 官方页面仍是系列接口契约；本机已另行核对64-bit mask类型、安装头文件和该探针的编译执行。down-shuffle越界说明、xor正文措辞及vote mask类型存在不协调之处，没有据此推导未测边界。安装头文件中的不同mask参数类型已由[独立后继对照](../wiki/wave-collectives.md#后继两种完整typed-mask选择不同归约入口)验证：当前SDK的unsigned完整32-bit入口按32元素分组，unsigned long完整64-bit入口按64元素分组。物理wave仍为64；其他mask值、参与模式和版本不在这一结论范围。
 
+## 原生WMMA入口与已观测的数值边界
+
+本机3.5.3编译器资源头`__clang_maca_mma_functions.h`提供`mxmaca::wmma`。官方示例的`mma.h`在cu-bridge路径下，不能省略包含链核对。当前FP16→float累加重载使用四参数`mma_sync`；不为它补造通用说明中出现的satf参数。native `-x maca` probe已编译执行，但其严格dyadic exact合同失败，见[完整数值诊断](../wiki/wmma-exactness.md)。float fragment的类型声明不能替代内部舍入保证。
+
+另一次CPU-only元数据查询在现有containerd环境中观察到Torch2.10.0与Triton3.6.0、包后缀metax3.8.0.4.c600u。它不是宿主3.5.3测试环境，当前wiki尚未在该容器执行或资格化矩阵kernel；以下网上mcTriton3.0源码观察也不能替代该安装的backend审查。
+
 ## mcTriton 源码事实
 
 [Python driver][triton-driver] 在 target 中保留 backend 名 `maca`，并使用 64-lane 组；launcher 将 `num_warps` 乘以 64 作为 block 的线程数。[C driver][triton-driver-c]另有兼容 capability 映射：设备 `major=10/15/16` 分别映射为 `80/86/89`。这些是该源码版本的接口实现，不能当作 NVIDIA compute capability 或 C550 原生 ISA 型号。

@@ -57,7 +57,7 @@ export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 ## 原生WMMA入口与已观测的数值边界
 
-本机3.5.3编译器资源头`__clang_maca_mma_functions.h`提供`mxmaca::wmma`。官方示例的`mma.h`在cu-bridge路径下，不能省略包含链核对。当前FP16→float累加重载使用四参数`mma_sync`；不为它补造通用说明中出现的satf参数。native `-x maca` probe已编译执行，但其严格dyadic exact合同失败，见[完整数值诊断](../wiki/wmma-exactness.md)。float fragment的类型声明不能替代内部舍入保证。
+本机3.5.3编译器资源头`__clang_maca_mma_functions.h`提供`mxmaca::wmma`。官方示例的`mma.h`在cu-bridge路径下，不能省略包含链核对。当前FP16→float累加重载使用四参数`mma_sync`；不为它补造通用说明中出现的satf参数。native `-x maca` probe已编译执行，但其严格dyadic exact合同失败，见[完整数值诊断](../wiki/wmma-exactness.md)。float fragment的类型声明不能替代内部舍入保证。[后继设备输入回读与scalar控制](../wiki/wmma-exactness.md#后继设备输入快照与标量fp32源码对照)在捕获边界上观察到输入一致、scalar精确、WMMA重现残差；这缩小到当前WMMA路径，仍不唯一指向硬件。
 
 另一次CPU-only元数据查询在现有containerd环境中观察到Torch2.10.0与Triton3.6.0、包后缀metax3.8.0.4.c600u。它不是宿主3.5.3测试环境，当前wiki尚未在该容器执行或资格化矩阵kernel；以下网上mcTriton3.0源码观察也不能替代该安装的backend审查。
 

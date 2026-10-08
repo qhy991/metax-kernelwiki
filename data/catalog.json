@@ -218,7 +218,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550原生WMMA：精确合同失败与可复现数值残差",
+      "title": "C550 WMMA精确性：输入回读一致、scalar精确与可复现残差",
       "tags": [
         "WMMA",
         "matrix",
@@ -229,17 +229,22 @@
         "精度",
         "矩阵",
         "诊断",
-        "C550"
+        "C550",
+        "scalar",
+        "input readback",
+        "device snapshots",
+        "对照"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
       "path": "wiki/wmma-exactness.md",
       "sources": [
         "https://github.com/qhy991/metax-kernelwiki/tree/ef22b51a416b4abf741494576a6402e8a50b2386",
-        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix"
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix",
+        "https://github.com/qhy991/metax-kernelwiki/tree/403a74a6211755e790886b84eefc45955c9588e6"
       ],
-      "result": "data/results/20261008-wmma-exact-diagnostic.json",
-      "limitations": "原严格exact合同失败，性能不接受。小型预打包FP16矩阵及floatfragment的一组数据；机制未定位，不能直接归责硬件或把观察上界当通用容差。"
+      "result": "data/results/20261008-wmma-scalar-control.json",
+      "limitations": "WMMA严格exact仍失败、性能不接受；三阶段输入回读一致且scalar-source FP32精确，只缩小到当前WMMA路径，不排除内部load/lowering/算术，不唯一归责硬件。"
     }
   ]
 }

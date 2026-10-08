@@ -113,8 +113,18 @@
 
 五个device worker及一个profiled应用已退出并验证释放。诊断trace110kernel、28regs/shared0/private0、recompiled false110；没有由此推导算术机制或性能。本轮不向open-cake-ir提升。此前`4aa7d4a`公有仓库CI已通过。
 
+## 2026-10-08：WMMA与scalar源码的设备输入控制
+
+后继源码`403a74a`保留原WMMA函数体和严格oracle，增加使用同A/B设备分配的scalar-source FP32实现，并保存计算前、两实现之间、计算后三次完整输入回读。每个实现独立C及guards，输出立即按wmma/scalar角色保存，顺序不改变文件归属。源码体相同不作为二进制相同的证明。
+
+12个正序/WMMA-first、12个逆序/scalar-first及1个K16配对trace，共25个logical case。153600个snapshot halfwords都与prepared/fixed输入相等；scalar的25份输出全部精确，WMMA仍有384个不等值（两遍各177，trace30）。新默认mode0的12case另作回归；全部37份WMMA输出逐word与旧ef22对应case相同。没有用scalar通过替换WMMA失败。
+
+[控制页](../wiki/wmma-exactness.md#后继设备输入快照与标量fp32源码对照) · [全部输入回读与两路输出](../data/results/20261008-wmma-scalar-control.json)。配对trace按真实函数名分成两个110-event组，各自删除10次预热；报告WMMA block64/28regs、scalar block256/36regs，两组shared/private0、recompiled false110。计时只保留追溯，无性能接受或速度比。
+
+这把排查范围缩小到本次插桩的WMMA路径，但三个捕获边界不证明kernel内部瞬态输入，仍不能唯一归责硬件。干净源码121项CPU检查、双模式本机编译和三个无设备host负对照通过；原先edf9857的软件CI通过不改变WMMA数值失败。四个worker及一个profiled应用已退出并验证释放，未向open-cake-ir提升。
+
 ## 下一轮问题
 
-- 在后继源码中保存device A/B输入回读，并加入同packed数据的标量FP32 GPU对照，区分传输/存储与WMMA路径；不修改原失败及强exact oracle。
-- 所有新增数值模式保持独立合同和失败记录，先解释残差，再讨论应用容差或性能。
-- 新容器中的Triton路线目前只有包身份观察，仍需核对实际backend与native目标并离线编译；不从兼容架构号继承硬件能力。
+- 缩小逻辑M/N及K前缀，保持同一完整16×16物理tile、输入公式与scalar控制，寻找残差出现条件；首个witness不等于已证明的最小反例。
+- 检查实际生成代码和WMMA路径的加载/算术实现；不从source-level scalar名称或API fragment类型推定ISA行为。
+- 原失败、精确oracle和非性能诊断状态保留。新的容器Triton路线仍仅完成包身份调查，不能承接当前native路线的资格。

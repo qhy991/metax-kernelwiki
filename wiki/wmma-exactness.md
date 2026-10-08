@@ -46,7 +46,7 @@ CPU oracle独立使用逻辑i/j/k整数点积，不调用WMMA、不使用fragmen
 
 独立诊断重新检查了首次CLI尚未检查到的后续输出，并对全部16个实际case保留了32,768个输入halfwords、4,096个C值和2,048个guards。所有输入符合预先声明的packed布局，所有C值有限、所有guards完好；参考为零和逻辑padding的位置也保持精确零。把实际输入逐项乘法、每次累加都舍入到FP32的CPU重放，同样得到精确参考值。
 
-这些检查支持排除host打包错误及通常的FP32求和重排作为当前解释，不能据此定位硬件缺陷。尚未保存device侧A/B回读，也没有在GPU上运行独立标量FP32对照，内部算术、编译器、输入/输出路径及硬件的责任仍未分离。
+这些检查支持排除host打包错误及通常的FP32求和重排作为当前解释，不能据此定位硬件缺陷。这一阶段尚未保存device侧A/B回读，也没有GPU标量FP32对照；下文的后继补充了这两项控制，仍未把责任唯一归给硬件。
 
 ## 误差指标不能省略定义
 
@@ -67,7 +67,40 @@ CPU oracle独立使用逻辑i/j/k整数点积，不调用WMMA、不使用fragmen
 
 wiki把本页标为`locally-measured / device-correctness`，表明它是直接测得的数值诊断；原性能入口`local-measurement`仍必须通过完整正确性检查。索引允许保存失败事实，不会把失败变成通过。
 
-下一轮将在后继源码与新诊断计划中保存device输入回读，并加入读取同一packed输入的标量FP32 GPU对照；保留当前失败，不在旧运行中改容差或替换实现。本轮没有向open-cake-ir的Compiler、Target或校准提升。
+后继使用新的源码与诊断计划补充输入回读和标量对照，原失败保持不变。各轮均未向open-cake-ir的Compiler、Target或校准提升。
+
+## 后继：设备输入快照与标量FP32源码对照
+
+源码`403a74a`加入独立的control模式，WMMA函数体保持相同；这不声明编译后二进制与`ef22b51`相同。每个logical case只向同一组A/B设备分配上传一次输入，然后依次运行WMMA和scalar两个实现。它们使用各自的C分配、各自的guards及固定的输出文件名；每个实现结束后立即保存完整输出，再进入另一个实现。
+
+标量源码让256个线程各负责一个C元素，使用`__half2float`读取与WMMA相同的packed A/B地址，遍历相同的完整K块（包含补零），用float变量执行乘加。WMMA使用64个线程和fragment接口。两者的执行几何及加载代码不同，这是功能对照；普通float源码也不证明最终一定采用独立标量指令或禁止FMA收缩。
+
+三次完整A/B回读分别发生在第一次计算前、两个实现之间、第二次计算后。每份快照都逐word对照原始输入文件和固定packing合同，两个实现之间不重新写入A/B。
+
+| 配对运行 | logical cases | WMMA精确不等元素数 | scalar精确不等元素数 | 三阶段输入回读 |
+| --- | ---: | ---: | ---: | --- |
+| 正序cases，WMMA先执行 | 12 | 177 | 0 | 全部一致 |
+| 逆序cases，scalar先执行 | 12 | 177 | 0 | 全部一致 |
+| K16配对trace，WMMA先执行 | 1 | 30 | 0 | 全部一致 |
+
+这25个配对case中，scalar的全部25份16×16结果都精确匹配原integer-dot/256 oracle；WMMA只有K0与1×1×1两种形状的重复观察通过，其余21份输出仍有失配。所有输出有限，所有guards完整。累计153,600个设备回读halfwords均与输入合同一致；它们是75次A/B成对快照，不是75套不同随机输入。
+
+16×16×16的C[0,0]在两种顺序和配对trace中都保持：
+
+| 路径 | 实际数值 | 实际FP32 bits |
+| --- | ---: | --- |
+| WMMA | -0.5000000596046448 | `0xbf000001` |
+| scalar源码 | -0.5 | `0xbf000000` |
+
+同时，新源码默认mode0的12case仍保留原严格失败行为。对所有37份新WMMA输出（默认12份、配对25份）的实读比较显示：完整输出words均与`ef22b51`中对应形状的原输出相同；相等是实际观察，不是投影器预设的通过条件。原结果没有被scalar的通过覆盖。
+
+[新控制记录](../data/results/20261008-wmma-scalar-control.json)公开了所有实际输入、三阶段回读及两个C输出。默认回归与配对合计62份variant输出、15,872个payload、7,936个guards、620个原始计时批次；总合同仍为`passed=false`、`performance_accepted=false`。按相同oracle保存失败，不比较两种实现的时间来声称加速。
+
+配对trace恰有220个kernel事件：WMMA和scalar各110个，分别按自己的前10次识别预热，未把两组事件混成一个全局预热前缀。工具报告WMMA为block64/28regs，scalar为block256/36regs；两组shared/private为0，重编译标志各110个false。所有四个worker及一个profiled应用均已退出并验证释放。
+
+在本次SDK、输入和插桩条件下，同一设备输入可以由scalar源码路径得到精确结果，WMMA路径则重现原残差，排查范围因而缩小到这条WMMA kernel路径。三个快照只证明捕获边界上的输入状态，不能排除kernel内部的瞬态值、专用fragment加载、不同lowering或内部算术；也不构成单独的硬件归因。
+
+下一步可以缩小逻辑矩阵及K前缀，同时保留完整物理tile与scalar控制，检查残差出现的条件；还需审查实际生成代码。当前没有证明“首个失配”就是最小反例，也没有把观察的误差上界变为通用容差。
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Toolchain](toolchain.md) · [q7 reproducer](../experiments/wmma_q7/README.md)
 
-The retained q7 executable contains **both LLVM bitcode and a native device ELF**. Installed SDK tools extract both payloads and decode the bitcode into LLVM IR. This identifies what the executed host file packages; runtime payload selection and final native arithmetic remain unresolved.
+The retained q7 executable contains **both LLVM bitcode and a native device ELF**. Installed SDK tools extract both payloads and decode the bitcode into LLVM IR. Separate module probes now load each extracted payload directly. This identifies the supplied input for those probes; the earlier host executable's payload selection and final native arithmetic remain unresolved.
 
 This page records a CPU-only inspection of the executable built from source [`9b7bef6`](https://github.com/qhy991/metax-kernelwiki/commit/9b7bef6ea79e7d71394f92a32987779d8fc18274) for the [single-launch q7 study](../wiki/wmma-exactness.md#standalone-q7-reproducer-one-launch-per-variant). It used MACA 3.5.3.18, MXCC `1.0.0 (6477545d4d)` and `-offload-arch=xcore1000`. The executable was neither rebuilt nor run during inspection. Its [bounded inspection record](../data/inspections/20261008-q7-binary.json) is separate from the unchanged [numerical result](../data/results/20261008-wmma-q7-repro.json).
 
@@ -109,6 +109,19 @@ The MCRTC output uses wrapper magic `0x0b17c0de` and raw CPU-type field 255, con
 MCRTC reports version integers 1/0, distinct from the SDK directory or a compiler build identifier. The valid case has a one-byte NUL log and eight API status records. An independent `#error` case returns compilation status 6 and producer exit 1, preserves its 207-byte log including NUL, and has six status records with no output buffer. Error-string helper calls are additional SDK calls, so these are status-record counts. Both program-destruction calls succeed and both observed CPU process groups are empty after exit. The full source suite passes 241 CPU tests, and 12 pre-API refusals pass on the installed host binary.
 
 This establishes the producer's returned form for one case. It does not establish that the old q7 wrapper loads, that these different sources are byte-identical, or which path the earlier fatbin selected. The earlier carrier refusal and numerical failures remain unchanged. Library-internal device/context behavior was not profiled; the probe itself calls no device enumeration, module loading or kernel launch API.
+
+## Separately measured module-input routes
+
+The successor `60dc2fc` experiment supplies the retained wrappers directly to `mcModuleLoadData`, without repackaging or recompiling device source. It keeps the supplied buffer alive through module unloading. The [module guide](../experiments/wmma_module/README.md) separates the API-only producer stage from q7 collection; [full numerical findings](../wiki/wmma-exactness.md#successor-direct-wrapped-bitcode-loads-and-retains-the-q7-residual) and the [result record](../data/results/20261008-wmma-wrapped-q7.json) retain the measured scope.
+
+| Exact input form | Observed route outcome on C550 / MACA 3.5.3.18 |
+| --- | --- |
+| 7,360-byte MCRTC producer wrapper | Load, lookup, synchronize and unload succeed. No kernel is launched. |
+| 18,232-byte q7 native ELF | Native control completes both launches; the strict q7 contract fails only for WMMA C00. |
+| 11,216-byte original q7 wrapper | Both orders and a separate trace complete; all six guarded matrices match their earlier native counterparts after complete input matching. WMMA retains the residual; scalar is exact. |
+| 15,324-byte constructed q7 carrier | The earlier `3a08040` attempt remains rejected at loading. It is not retried in the wrapper experiment. |
+
+Each supplied-image receipt compares the complete buffer with its own retained original. These distinct origins are not interchangeable even when their wrapper headers share a convention. All four direct-wrapper processes leave one `.cache` and one `.cache.lock` file in their initially empty requested directories; the native control leaves none. The q7 trace nevertheless reports `is_recompiled=false` for both kernels. Neither file creation nor this event flag identifies cache contents, final instructions or a count of compilation operations. Those questions require separate evidence.
 
 [bundle]: https://releases.llvm.org/19.1.0/tools/clang/docs/ClangOffloadBundler.html#bundled-binary-file-layout
 [bitcode]: https://releases.llvm.org/19.1.0/docs/BitCodeFormat.html#bitcode-wrapper-format

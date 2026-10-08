@@ -7,7 +7,7 @@
 
 **Scope:** one C550, MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Native FP16 WMMA with a float accumulator fails the tested exact-dyadic contract. Scalar controls are exact in the recorded comparisons. **No WMMA performance result is accepted.** Here q labels the base product pair `(q, -(q+1))/256`. The two-product example `(7,-8)/256` returns `0xbb800001` instead of exact `0xbb800000`.
 
-**Reproduce the fixed q7 input:** [standalone guide](../experiments/wmma_q7/README.md) · [one-launch results](#standalone-q7-reproducer-one-launch-per-variant). A [host-only module driver](#successor-explicit-native-elf-module-loading) also reproduces the mismatch when supplied only the extracted native ELF.
+**Reproduce the fixed q7 input:** [standalone guide](../experiments/wmma_q7/README.md) · [one-launch results](#standalone-q7-reproducer-one-launch-per-variant) · [module-driver guide](../experiments/wmma_module/README.md). Explicitly supplying either the [native ELF](#successor-explicit-native-elf-module-loading) or the [original extracted bitcode wrapper](#successor-direct-wrapped-bitcode-loads-and-retains-the-q7-residual) reproduces the mismatch.
 
 | Question | Bounded finding | Evidence |
 | --- | --- | --- |
@@ -16,7 +16,8 @@
 | Do signs and product magnitudes matter? | At product magnitudes 12/256 and 13/256, same-sign pairs are exact; two mixed-sign cases have negative residuals. In the fixed-result integer q1–14 grid, pairs at q1–6 are exact and q7–14 fail at C00. | [Product signs](#successor-fixed-magnitude-sign-configurations) · [Magnitude grid](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
 | What happens under exact powers of two? | At q6/q7/q12, A-only scaling preserves the normalized failing residual. Reciprocal A/B scaling holds products fixed and preserves complete outputs across the five tested exponent pairs. | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal scaling](#successor-reciprocal-exponents-with-fixed-products) |
 | Does moving signs between factors change the result? | At q6/q7/q12, transferring either or both term signs between A and B preserves complete outputs within each q/role. q6 pairs are exact; q7/q12 retain -2^-31. | [Factor-sign transfer](#successor-transferring-factor-signs-at-fixed-products) |
-| Does a bitcode-only carrier reach the numerical test? | The tested two-entry carrier is rejected at module loading. No bitcode-route output or numerical result exists. | [Load refusal](#successor-bitcode-only-carrier-rejected-before-execution) |
+| Does a bitcode-only carrier reach the numerical test? | The tested two-entry carrier is rejected at module loading. This carrier attempt produced no numerical output. | [Load refusal](#successor-bitcode-only-carrier-rejected-before-execution) |
+| Does the original bitcode wrapper load directly? | The retained q7 wrapper loads and executes in both orders and a separate trace. Each WMMA output retains the C00 residual; scalar is exact. A separate MCRTC wrapper passes load/lookup only, with no launch. | [Direct wrappers](#successor-direct-wrapped-bitcode-loads-and-retains-the-q7-residual) |
 
 The cause remains unresolved. [Retained-binary inspection](../docs/compiled-artifacts.md) now identifies packaged bitcode and a native ELF, but not runtime payload selection or native arithmetic. These observations do not identify instruction precision, rounding or a unique compiler/hardware defect. A float output type alone does not establish stepwise IEEE FP32 arithmetic. Validate each workload against its own numerical contract; these bounded diagnostics do not qualify arbitrary-input or framework GEMM.
 <!-- kernelwiki:summary:end -->
@@ -35,6 +36,7 @@ The cause remains unresolved. [Retained-binary inspection](../docs/compiled-arti
 | What does the executed host file package? | [Compiled-artifact inspection](../docs/compiled-artifacts.md) |
 | Does explicitly supplying only its native ELF reproduce the result? | [Native-module route](#successor-explicit-native-elf-module-loading) |
 | What happens with only the retained bitcode in a generated carrier? | [Bitcode-carrier load refusal](#successor-bitcode-only-carrier-rejected-before-execution) |
+| Can the original wrapper be loaded without that carrier? | [Direct-wrapper loading and q7 results](#successor-direct-wrapped-bitcode-loads-and-retains-the-q7-residual) |
 | How can I reproduce one concrete input? | [Standalone q7 package and results](#standalone-q7-reproducer-one-launch-per-variant) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
@@ -505,13 +507,36 @@ The predeclared plan starts with a native-v2 control, then two bitcode orders an
 
 The runtime reports that the fatbin does not contain an `xcore1002` binary. Its diagnostic suggests an `--offload-arch=xcore1002` build, but that option was not qualified here. The preceding control successfully used the retained native payload compiled for family `xcore1000`. This refusal therefore does not establish a general C550 compiler-target rule or identify which format, entry-selection or JIT rule caused it.
 
-The failed attempt retains only the supplied-image file, two host-prepared input files and one device record. The source throws at the checked load call before allocating the collector's device buffers, uploading its inputs, taking snapshots or launching q7. **No bitcode-route numerical result exists.** The `loaded-image.bin` filename records the supplied buffer; it does not mean loading succeeded. Post-release CPU inspection confirms that buffer equals the prepared carrier and still contains the exact original bitcode. These successful input checks do not turn the rejected load into accepted execution.
+The failed attempt retains only the supplied-image file, two host-prepared input files and one device record. The source throws at the checked load call before allocating the collector's device buffers, uploading its inputs, taking snapshots or launching q7. **This carrier attempt produced no numerical output.** The `loaded-image.bin` filename records the supplied buffer; it does not mean loading succeeded. Post-release CPU inspection confirms that buffer equals the prepared carrier and still contains the exact original bitcode. These successful input checks do not turn the rejected load into accepted execution.
 
 Independent analysis checks 8,960 native-control input/snapshot/payload/guard words and the failed attempt's 2,048 host-prepared halfwords separately. Native values are finite, snapshots agree and guards remain intact. `MACA_MODULE_LOADING` is unset in the successful native collector's record and in the failed attempt's requested environment; the latter has no complete collector protocol record. Both cache directories remain empty in the recorded file observations, which do not prove the absence of internal runtime work.
 
 Frozen source passed 229 CPU tests, both actual input forms passed the CPU preparation gate, and 12 host-binary refusals passed before admission. Both attempted workers, their observed process groups and their lock-PID observations passed release checks. No profiler ran. The bitcode case establishes rejection of this exact carrier on this installed route; it does not establish general bitcode incompatibility, numerical failure, old fatbin selection, native instructions or the arithmetic cause. No performance or open-cake-ir promotion is accepted.
 
 A subsequent [CPU-only MCRTC producer probe](../experiments/mcrtc_format/README.md#observed-result) returns a wrapped LLVM bitcode buffer for a new minimal source, distinct from this constructed carrier. It identifies a producer format without loading q7 or changing this refusal. Any explicit wrapped-bitcode load requires a separately declared experiment.
+
+## Successor: direct wrapped bitcode loads and retains the q7 residual
+
+Frozen source `60dc2fc` uses a host-only driver and protocol v3 to supply the **original wrappers directly**, including their retained headers and padding. It compiles no new device source, repackages no input and retries no rejected carrier. The [guide](../experiments/wmma_module/README.md) separates producer load/lookup from q7 execution; the [complete result](../data/results/20261008-wmma-wrapped-q7.json) records both scopes.
+
+The first stage supplies the 7,360-byte output saved by the independent MCRTC producer. Loading, exact-name lookup of `mcrtc_format_probe`, synchronization and unloading succeed. The driver retains the image buffer until unload. **It launches no kernel and has no numerical evaluation.** This establishes these API operations for that saved image, not its execution or general bitcode compatibility.
+
+The next four stages preserve the fixed q7 inputs, oracle, full readbacks, guarded outputs and one launch per variant:
+
+| Supplied image and order | WMMA C00 | Scalar C00 | Unequal WMMA / scalar elements |
+| --- | --- | --- | --- |
+| Native ELF control, WMMA first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| Original q7 wrapper, WMMA first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| Original q7 wrapper, scalar first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| Original q7 wrapper, WMMA-first resource trace | `0xbb800001` | `0xbb800000` | 1 / 0 |
+
+All four WMMA outputs retain signed residual **-2^-31** at C00, one adjacent FP32 step below exact -1/256. Every other payload value is zero; all values are finite, all guards intact and all snapshots agree with the prepared inputs. After complete input matching, all eight guarded output buffers equal the earlier native-module output for the corresponding variant. Independent analysis checks 35,840 input, snapshot, payload and guard words. The producer-load stage contributes none of these q7 words, matrices or launches.
+
+The direct q7 image is the unchanged 11,216-byte wrapper extracted from source `9b7bef6`; the native control supplies its original 18,232-byte ELF. Post-release checkers compare each supplied image against its independently retained original. All five workers complete synchronization/unload and pass worker, observed-process-group and lock-PID release checks; the trace application also exits. Source verification passes 250 CPU tests, three actual image-structure gates and 18 pre-device host-binary refusals.
+
+`MACA_MODULE_LOADING` is recorded unset in every completed collector. All requested cache directories start empty. The native control leaves no files; each of the four direct-wrapper processes leaves one `.cache` file and one `.cache.lock` file. These file observations do not identify the cache contents, effective compilation policy or final instructions. The separate q7 trace contains exactly two kernel events, with blocks 64/256, register descriptors 28/36, zero shared/private fields and `is_recompiled=false` for each event. That flag is not a count of compilation operations. Raw durations 8,704/9,984 have unverified units and support no timing comparison.
+
+This resolves the bounded input-format question: both tested direct wrappers reach their declared API stages, and q7 reaches numerical evaluation. The earlier constructed carrier still has its own load refusal. The old host executable's payload selection, final native instructions and arithmetic cause remain unresolved. Exact q7 acceptance stays failed; no performance or open-cake-ir promotion is accepted.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

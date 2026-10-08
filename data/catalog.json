@@ -54,9 +54,10 @@
         "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html",
         "docs/compiled-artifacts.md",
         "experiments/mcrtc_format/README.md",
-        "data/inspections/20261008-mcrtc-producer.json"
+        "data/inspections/20261008-mcrtc-producer.json",
+        "data/results/20261008-wmma-wrapped-q7.json"
       ],
-      "limitations": "Upstream sources and the installed host are recorded separately. Linked CPU inspections and the minimal MCRTC producer observation establish particular artifact forms, not loader support, physical target qualification, numerical acceptance or C550 performance."
+      "limitations": "Upstream guidance, CPU artifact inspections and device module probes have separate scopes. Direct-wrapper loading is measured only for the retained producer and q7 inputs; the constructed-carrier refusal remains. No general bitcode compatibility, final-instruction identity or C550 performance is established."
     },
     {
       "id": "maca-event-timing",
@@ -280,7 +281,10 @@
         "explicit image",
         "bitcode carrier",
         "module load refusal",
-        "mcErrorNoKernelImageForDevice"
+        "mcErrorNoKernelImageForDevice",
+        "direct wrapper",
+        "wrapped bitcode",
+        "producer load lookup"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -300,10 +304,12 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/9b7bef6ea79e7d71394f92a32987779d8fc18274",
         "https://github.com/qhy991/metax-kernelwiki/tree/b463205eff646cd0c88fe26fd51838be1f8f1726",
         "https://github.com/qhy991/metax-kernelwiki/tree/3a0804098493b2bc750097e0ca6720a2d2449780",
-        "data/results/20261008-wmma-bitcode-route.json"
+        "data/results/20261008-wmma-bitcode-route.json",
+        "https://github.com/qhy991/metax-kernelwiki/tree/60dc2fcde14fa5190ba6639a0a729eaf05ecb851",
+        "data/results/20261008-wmma-wrapped-q7.json"
       ],
-      "result": "data/results/20261008-wmma-module-q7.json",
-      "limitations": "The primary numerical result covers the native module route, where q7 WMMA exact acceptance fails and scalar controls pass. A later generated bitcode-only carrier is rejected during module loading and has no numerical result. These observations do not establish general bitcode support, prior fatbin selection, final instruction transformations, arithmetic cause or performance."
+      "result": "data/results/20261008-wmma-wrapped-q7.json",
+      "limitations": "The primary numerical result covers one native q7 control and three original-wrapper collections. Each WMMA output fails exact acceptance at C00; scalar controls pass. A separate producer wrapper passes load/lookup without a launch or numerical evaluation. The earlier constructed carrier remains refused. General bitcode support, prior fatbin selection, final instructions, arithmetic cause and performance remain unqualified."
     }
   ]
 }

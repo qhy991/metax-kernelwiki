@@ -1,0 +1,484 @@
+{
+  "schema": "metax-kernelwiki.mcrtc-producer-observation.v1",
+  "run_id": "20261008-mcrtc-format",
+  "source_commit": "83f6384eddea50fd554022018c8073888a8b0d8a",
+  "purpose": "Observe the serialization returned by the installed MCRTC API for one independently authored minimal source, before any loader experiment.",
+  "outcome": "producer_serialization_observed",
+  "environment": {
+    "sdk_installation_path": "/opt/maca-3.5.3",
+    "installed_header": "mcr/mcrtc.h",
+    "linked_api_library": "libmcruntime.so",
+    "host_compiler_version": "g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+    "host_compile_flags": [
+      "-O2",
+      "-std=c++17",
+      "-I<SDK>/include",
+      "-L<SDK>/lib",
+      "-Wl,-rpath,<SDK>/lib",
+      "-lmcruntime"
+    ],
+    "host_compile_exit": 0,
+    "host_executable_contains_mc_fatbin": false,
+    "observed_mcrtc_version_api": {
+      "major": 1,
+      "minor": 0
+    },
+    "mcrtc_compile_options": [],
+    "explicit_architecture_option_supplied": false,
+    "version_scope": "The installation path, MCRTC version integers, host compiler and decoder identify different observations; no SDK patch or producer compiler build identity is inferred from MCRTC 1/0."
+  },
+  "preflight": {
+    "source_commit": "83f6384eddea50fd554022018c8073888a8b0d8a",
+    "refusals": [
+      {
+        "case": "usage",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "bad-case",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "missing-output",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "nonempty-output",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "missing-CUDA_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "missing-HIP_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "missing-ROCR_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "missing-MACA_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "nonempty-CUDA_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "nonempty-HIP_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "nonempty-ROCR_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      },
+      {
+        "case": "nonempty-MACA_VISIBLE_DEVICES",
+        "exit": 2,
+        "output_state_preserved": true
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case": "valid",
+      "producer_exit": 0,
+      "receipt_checker_exit": 0,
+      "status": "producer-success",
+      "api_records": [
+        {
+          "type": "request",
+          "schema": "metax-kernelwiki.mcrtc-format.v1",
+          "case": "valid",
+          "source": "extern \"C\" __global__ void mcrtc_format_probe() {}\n",
+          "program_name": "mcrtc_format_probe.mc",
+          "num_options": 0,
+          "options": [],
+          "options_pointer_is_null": true,
+          "num_headers": 0,
+          "headers_pointer_is_null": true,
+          "include_names_pointer_is_null": true,
+          "visibility": {
+            "CUDA_VISIBLE_DEVICES": "",
+            "HIP_VISIBLE_DEVICES": "",
+            "ROCR_VISIBLE_DEVICES": "",
+            "MACA_VISIBLE_DEVICES": ""
+          },
+          "maximum_buffer_bytes": 67108864
+        },
+        {
+          "type": "api",
+          "api": "mcrtcVersion",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "version",
+          "major": 1,
+          "minor": 0
+        },
+        {
+          "type": "api",
+          "api": "mcrtcCreateProgram",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "api",
+          "api": "mcrtcCompileProgram",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetProgramLogSize",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "size",
+          "buffer": "compile-log",
+          "bytes": 1
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetProgramLog",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "file",
+          "buffer": "compile-log",
+          "file": "compile.log",
+          "bytes": 1
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetBitcodeSize",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "size",
+          "buffer": "producer-output",
+          "bytes": 7360
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetBitcode",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "file",
+          "buffer": "producer-output",
+          "file": "producer-output.bin",
+          "bytes": 7360
+        },
+        {
+          "type": "api",
+          "api": "mcrtcDestroyProgram",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "complete",
+          "case": "valid",
+          "status": "producer-success",
+          "exit_code": 0,
+          "program_created": true,
+          "program_destroyed": true,
+          "log_retained": true,
+          "output_retained": true
+        }
+      ],
+      "receipt_check": {
+        "schema": "metax-kernelwiki.mcrtc-format.v1",
+        "case": "valid",
+        "status": "producer-success",
+        "receipt_valid": true,
+        "expected_compile_failure": false,
+        "recorded_producer_exit": 0,
+        "observed_mcrtc_version": {
+          "major": 1,
+          "minor": 0
+        },
+        "api_records_checked": 8,
+        "log_bytes_checked": 1,
+        "output_bytes_checked": 7360,
+        "log_retained": true,
+        "output_retained": true,
+        "program_destroyed": true,
+        "visibility": {
+          "CUDA_VISIBLE_DEVICES": "",
+          "HIP_VISIBLE_DEVICES": "",
+          "ROCR_VISIBLE_DEVICES": "",
+          "MACA_VISIBLE_DEVICES": ""
+        },
+        "compile_options": [],
+        "output_format_interpreted": false,
+        "loader_acceptance": "not_tested",
+        "numerical_acceptance": "not_applicable",
+        "scope": "Declared CPU producer receipt and exact file extents only; no output-format, loader, device-execution or numerical acceptance is established. The caller must separately bind the recorded producer exit to its process receipt."
+      },
+      "compile_log": {
+        "reported_and_retained_bytes": 1,
+        "trailing_nul_retained": true,
+        "readable_text": "",
+        "normalization": "The readable view omits a final NUL and replaces the randomized compiler temporary directory. Raw original bytes remain retained."
+      },
+      "retained_files": [
+        "compile.log",
+        "producer-output.bin",
+        "raw.jsonl"
+      ],
+      "observed_cpu_process_group_empty": true,
+      "process_observation_scope": "The recorded process group was empty after the bounded child ended; this does not prove absence of arbitrary detached descendants."
+    },
+    {
+      "case": "compile-error",
+      "producer_exit": 1,
+      "receipt_checker_exit": 0,
+      "status": "compile-failed",
+      "api_records": [
+        {
+          "type": "request",
+          "schema": "metax-kernelwiki.mcrtc-format.v1",
+          "case": "compile-error",
+          "source": "#error MCRTC_FORMAT_NEGATIVE_CONTROL\nextern \"C\" __global__ void mcrtc_format_probe() {}\n",
+          "program_name": "mcrtc_format_probe.mc",
+          "num_options": 0,
+          "options": [],
+          "options_pointer_is_null": true,
+          "num_headers": 0,
+          "headers_pointer_is_null": true,
+          "include_names_pointer_is_null": true,
+          "visibility": {
+            "CUDA_VISIBLE_DEVICES": "",
+            "HIP_VISIBLE_DEVICES": "",
+            "ROCR_VISIBLE_DEVICES": "",
+            "MACA_VISIBLE_DEVICES": ""
+          },
+          "maximum_buffer_bytes": 67108864
+        },
+        {
+          "type": "api",
+          "api": "mcrtcVersion",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "version",
+          "major": 1,
+          "minor": 0
+        },
+        {
+          "type": "api",
+          "api": "mcrtcCreateProgram",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "api",
+          "api": "mcrtcCompileProgram",
+          "status_code": 6,
+          "status_name": "MCRTC_ERROR_COMPILATION",
+          "error_string": "MCCRTC_RESULT_ERROR_COMPILATION"
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetProgramLogSize",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "size",
+          "buffer": "compile-log",
+          "bytes": 207
+        },
+        {
+          "type": "api",
+          "api": "mcrtcGetProgramLog",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "file",
+          "buffer": "compile-log",
+          "file": "compile.log",
+          "bytes": 207
+        },
+        {
+          "type": "api",
+          "api": "mcrtcDestroyProgram",
+          "status_code": 0,
+          "status_name": "MCRTC_SUCCESS",
+          "error_string": "MCCRTC_RESULT_SUCCESS"
+        },
+        {
+          "type": "complete",
+          "case": "compile-error",
+          "status": "compile-failed",
+          "exit_code": 1,
+          "program_created": true,
+          "program_destroyed": true,
+          "log_retained": true,
+          "output_retained": false
+        }
+      ],
+      "receipt_check": {
+        "schema": "metax-kernelwiki.mcrtc-format.v1",
+        "case": "compile-error",
+        "status": "compile-failed",
+        "receipt_valid": true,
+        "expected_compile_failure": true,
+        "recorded_producer_exit": 1,
+        "observed_mcrtc_version": {
+          "major": 1,
+          "minor": 0
+        },
+        "api_records_checked": 6,
+        "log_bytes_checked": 207,
+        "output_bytes_checked": null,
+        "log_retained": true,
+        "output_retained": false,
+        "program_destroyed": true,
+        "visibility": {
+          "CUDA_VISIBLE_DEVICES": "",
+          "HIP_VISIBLE_DEVICES": "",
+          "ROCR_VISIBLE_DEVICES": "",
+          "MACA_VISIBLE_DEVICES": ""
+        },
+        "compile_options": [],
+        "output_format_interpreted": false,
+        "loader_acceptance": "not_tested",
+        "numerical_acceptance": "not_applicable",
+        "scope": "Declared CPU producer receipt and exact file extents only; no output-format, loader, device-execution or numerical acceptance is established. The caller must separately bind the recorded producer exit to its process receipt."
+      },
+      "compile_log": {
+        "reported_and_retained_bytes": 207,
+        "trailing_nul_retained": true,
+        "readable_text": "<compiler-temporary-directory>/mcrtc_format_probe.mc:1:2: error: MCRTC_FORMAT_NEGATIVE_CONTROL\n    1 | #error MCRTC_FORMAT_NEGATIVE_CONTROL\n      |  ^\n1 error generated when compiling for xcore1000.\n",
+        "normalization": "The readable view omits a final NUL and replaces the randomized compiler temporary directory. Raw original bytes remain retained."
+      },
+      "retained_files": [
+        "compile.log",
+        "raw.jsonl"
+      ],
+      "observed_cpu_process_group_empty": true,
+      "process_observation_scope": "The recorded process group was empty after the bounded child ended; this does not prove absence of arbitrary detached descendants."
+    }
+  ],
+  "serialization_inspection": {
+    "reported_and_retained_bytes": 7360,
+    "outer_format": "LLVM bitcode wrapper",
+    "wrapper": {
+      "magic_raw": 186106078,
+      "version": 0,
+      "bitcode_offset": 20,
+      "bitcode_size": 7332,
+      "cpu_type_raw": 255
+    },
+    "inner_magic_hex": "4243c0de",
+    "trailing_padding_bytes": 8,
+    "trailing_padding_all_zero": true,
+    "decoder": {
+      "tool": "<SDK>/mxgpu_llvm/bin/llvm-dis",
+      "reported_version": "19.1.3",
+      "command": [
+        "<SDK>/mxgpu_llvm/bin/llvm-dis",
+        "cases/valid/output/producer-output.bin",
+        "-o",
+        "inspection/producer-output.ll"
+      ],
+      "exit": 0,
+      "scope": "Decode retained bytes to LLVM IR; no source recompilation or native ISA disassembly."
+    },
+    "selected_ir": {
+      "source_filename": "ld-temp.o",
+      "target_triple": "mxc-metax-macahca",
+      "function": "mcrtc_format_probe",
+      "calling_convention": "metaxgpu_kernel",
+      "definition": "define protected metaxgpu_kernel void @mcrtc_format_probe() local_unnamed_addr #5 {",
+      "probe_attributes": {
+        "target-cpu": "xcore1000",
+        "target-features": "+xcore1000"
+      }
+    },
+    "scope": "One independent empty-kernel source, zero compile options and this installed producer. Emitted target attributes are not a universal default or physical-device qualification."
+  },
+  "prior_q7_format_reference": {
+    "record": "data/inspections/20261008-q7-binary.json",
+    "source_commit": "9b7bef6ea79e7d71394f92a32987779d8fc18274",
+    "wrapped_entry_bytes": 11216,
+    "wrapper": {
+      "magic_raw": 186106078,
+      "version": 0,
+      "bitcode_offset": 20,
+      "bitcode_size": 11184,
+      "cpu_type_raw": 255,
+      "trailing_padding_bytes": 12,
+      "trailing_padding_all_zero": true
+    },
+    "comparison_scope": "Wrapper structure only; source programs and byte extents differ. No byte identity, loader/JIT admission or q7 numerical conclusion follows."
+  },
+  "verification": {
+    "frozen_source_cpu_tests": 241,
+    "host_pre_api_refusals": 12,
+    "producer_cases": 2,
+    "producer_success_cases": 1,
+    "declared_compile_failure_controls": 1,
+    "api_status_record_counts": {
+      "valid": 8,
+      "compile-error": 6
+    },
+    "count_scope": "Status rows, not total SDK invocations: error-string helpers are also called.",
+    "api_destroy_succeeded_both_cases": true,
+    "observed_producer_groups_empty_both_cases": true
+  },
+  "scope": {
+    "gpu_lease_requested": false,
+    "device_enumeration_called_by_probe": false,
+    "module_load_called_by_probe": false,
+    "kernel_launch_called_by_probe": false,
+    "library_internal_device_context_behavior_profiled": false,
+    "loader_acceptance": "not_tested",
+    "numerical_acceptance": "not_applicable",
+    "performance_accepted": false
+  },
+  "limitations": [
+    "A successful producer receipt establishes the recorded API statuses and retained bytes, not module execution or numerical correctness.",
+    "The deliberately invalid source remains compile-failed with producer exit1; checker exit0 only validates the declared negative control.",
+    "The output is wrapped LLVM bitcode in this case, not the earlier constructed Clang offload carrier. The earlier carrier refusal remains unchanged.",
+    "The raw CPU-type wrapper field255 does not establish a physical architecture.",
+    "MCRTC1/0 and emitted xcore1000 attributes do not establish SDK patch identity, a general compiler default or C550 execution support.",
+    "Decoded source_filename ld-temp.o does not name the original input. Source attribution uses the retained request, API sequence and output receipt.",
+    "All four visibility masks were empty at the producer boundary; unprofiled library internals are outside the source-level call-list observation.",
+    "Full returned bytes, original compiler log and decoded IR remain private retained evidence; public data contains selected facts and normalized log text."
+  ]
+}

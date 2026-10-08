@@ -77,6 +77,12 @@ In a later v2 comparison, the same host collector's native control completes, wh
 
 A separate CPU-only metadata query found Torch 2.10.0 and Triton 3.6.0 with the package suffix `metax3.8.0.4.c600u` in an existing containerd environment. That is not the host 3.5.3 test environment. This wiki has not executed or qualified a matrix kernel in that container. The online mcTriton 3.0 observations below likewise do not replace inspection of that installation's backend.
 
+## MCRTC producer output: an observed host API boundary
+
+The [CPU producer probe](../experiments/mcrtc_format/README.md) uses the installed `mcr/mcrtc.h` declarations and `libmcruntime.so` exports. `mcrtcCompileProgram(program, 0, nullptr)` accepts the minimal source in this observation, and `mcrtcGetBitcodeSize/GetBitcode` returns a 7,360-byte LLVM bitcode wrapper. MCRTC reports version 1/0; this is not an SDK patch version. The [decoded output](compiled-artifacts.md#mcrtc-returns-a-wrapped-bitcode-buffer-in-a-separate-cpu-probe) names `xcore1000` for this case, while module loading remains untested.
+
+The literal source, omitted options, complete byte buffer, compilation log and API status sequence are retained. A separate deliberate compiler error preserves a failed compilation and successful cleanup. The host compiler's C++17 flag is not passed to MCRTC. This producer observation does not turn the earlier constructed-carrier rejection into a successful route or qualify all raw/wrapped bitcode inputs.
+
 ## mcTriton source observations
 
 The [Python driver][triton-driver] keeps the backend name `maca` and uses 64-lane groups; its launcher computes block threads as `64 * num_warps`. The [C driver][triton-driver-c] separately maps device `major=10/15/16` to compatibility capabilities `80/86/89`. These are interface choices in that source version, not NVIDIA compute capabilities or C550 native ISA identifiers.

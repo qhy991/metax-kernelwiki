@@ -94,6 +94,22 @@ A later, separate [native-module experiment](../wiki/wmma-exactness.md#successor
 
 The subsequent [bitcode-carrier experiment](../wiki/wmma-exactness.md#successor-bitcode-only-carrier-rejected-before-execution) packages only the unchanged wrapped bitcode plus an empty host descriptor. The installed bundler emits a 15,324-byte standalone carrier with a 12-byte `__FILE_END__` trailer, without the extra NUL observed in the old embedded section. Structure and payload checks pass, but `mcModuleLoadData` rejects this carrier before numerical execution. Packaging validity, runtime image selection and numerical acceptance are separate checks.
 
+## MCRTC returns a wrapped bitcode buffer in a separate CPU probe
+
+Source `83f6384` independently compiles `extern "C" __global__ void mcrtc_format_probe() {}` through the installed MCRTC API, with zero options and all four visibility masks present and empty. It captures the exact `mcrtcGetBitcodeSize`/`mcrtcGetBitcode` result. This is a new minimal source, not a recompilation or execution of q7. The [producer guide](../experiments/mcrtc_format/README.md) and [CPU observation](../data/inspections/20261008-mcrtc-producer.json) retain the commands, statuses and negative control.
+
+| Observed buffer | Outer form | Total bytes | Bitcode body | Trailing bytes |
+| --- | --- | ---: | ---: | --- |
+| New MCRTC minimal-source output | LLVM bitcode wrapper, version 0, body offset 20 | 7,360 | 7,332 | 8 zero bytes |
+| Earlier q7 extracted bitcode entry | LLVM bitcode wrapper, version 0, body offset 20 | 11,216 | 11,184 | 12 zero bytes |
+| Rejected q7 bitcode-only carrier | Clang bundle with empty host and one wrapped-bitcode entry | 15,324 | 11,184 inside its payload | 12-byte `__FILE_END__`, without NUL |
+
+The MCRTC output uses wrapper magic `0x0b17c0de` and raw CPU-type field 255, consistent with the [wrapper structure][bitcode]. That raw field does not identify a physical architecture. Its body starts with LLVM bitcode magic and the installed `llvm-dis` 19.1.3 decodes the **retained output** directly. The emitted module names triple `mxc-metax-macahca`; the probe is `metaxgpu_kernel` with `target-cpu="xcore1000"` and `target-features="+xcore1000"`. These are observations of this source/options/installation, not an ISA decoder or C550 execution qualification. Decoded `source_filename` is `ld-temp.o`; the source lineage comes from the retained API request and output receipt.
+
+MCRTC reports version integers 1/0, distinct from the SDK directory or a compiler build identifier. The valid case has a one-byte NUL log and eight API status records. An independent `#error` case returns compilation status 6 and producer exit 1, preserves its 207-byte log including NUL, and has six status records with no output buffer. Error-string helper calls are additional SDK calls, so these are status-record counts. Both program-destruction calls succeed and both observed CPU process groups are empty after exit. The full source suite passes 241 CPU tests, and 12 pre-API refusals pass on the installed host binary.
+
+This establishes the producer's returned form for one case. It does not establish that the old q7 wrapper loads, that these different sources are byte-identical, or which path the earlier fatbin selected. The earlier carrier refusal and numerical failures remain unchanged. Library-internal device/context behavior was not profiled; the probe itself calls no device enumeration, module loading or kernel launch API.
+
 [bundle]: https://releases.llvm.org/19.1.0/tools/clang/docs/ClangOffloadBundler.html#bundled-binary-file-layout
 [bitcode]: https://releases.llvm.org/19.1.0/docs/BitCodeFormat.html#bitcode-wrapper-format
 [objcopy]: https://releases.llvm.org/19.1.0/docs/CommandGuide/llvm-objcopy.html

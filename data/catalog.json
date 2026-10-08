@@ -40,7 +40,11 @@
         "artifact-inspection",
         "module loading",
         "bitcode carrier",
-        "runtime image selection"
+        "runtime image selection",
+        "MCRTC",
+        "runtime compilation",
+        "producer serialization",
+        "wrapped bitcode"
       ],
       "confidence": "documented",
       "evidence_scope": "upstream-source",
@@ -48,9 +52,11 @@
       "sources": [
         "https://github.com/MetaX-MACA/mcTriton",
         "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html",
-        "docs/compiled-artifacts.md"
+        "docs/compiled-artifacts.md",
+        "experiments/mcrtc_format/README.md",
+        "data/inspections/20261008-mcrtc-producer.json"
       ],
-      "limitations": "Upstream sources and the installed host are recorded separately. The linked retained-artifact inspection is CPU-only and does not identify runtime payload selection or establish C550 performance."
+      "limitations": "Upstream sources and the installed host are recorded separately. Linked CPU inspections and the minimal MCRTC producer observation establish particular artifact forms, not loader support, physical target qualification, numerical acceptance or C550 performance."
     },
     {
       "id": "maca-event-timing",

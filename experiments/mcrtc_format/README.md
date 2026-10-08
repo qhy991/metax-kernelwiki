@@ -25,7 +25,8 @@ The literal source, options, program name and visibility masks are retained in `
 Use a fresh output path with an existing parent directory. The host executable uses only the MCRTC header and standard C++ headers, linked against the installed runtime library:
 
 ```sh
-MACA_PATH=/opt/maca-3.5.3 \
+MACA_PATH=/opt/maca-3.5.3 CXX=/usr/bin/g++ \
+LD_LIBRARY_PATH=/opt/maca-3.5.3/lib \
 MACA_VISIBLE_DEVICES= CUDA_VISIBLE_DEVICES= HIP_VISIBLE_DEVICES= ROCR_VISIBLE_DEVICES= \
 bash experiments/mcrtc_format/compile.sh /absolute/fresh/build/producer
 ```
@@ -37,6 +38,7 @@ Retain the host compiler version and complete command. The host's `-std=c++17` f
 Create a fresh empty output directory for each case, then run each bounded CPU child separately:
 
 ```sh
+LD_LIBRARY_PATH=/opt/maca-3.5.3/lib \
 MACA_VISIBLE_DEVICES= CUDA_VISIBLE_DEVICES= HIP_VISIBLE_DEVICES= ROCR_VISIBLE_DEVICES= \
 timeout --signal=TERM --kill-after=10s 120s \
   /absolute/frozen/build/producer --capture valid /absolute/fresh/valid-output
@@ -60,3 +62,11 @@ Checker exit 0 means the receipt matches the requested case. For the negative co
 Identify the returned buffer from its actual bytes. If it has a known wrapper, bundle or ELF structure, report the bounded fields and tool results. If its format is unknown, retain that observation. Use the installed decoder on the retained buffer where supported; do not substitute a new `-emit-llvm` source compilation or silently repackage it.
 
 Even if this producer returns a format resembling the earlier q7 payload, it is a different source and artifact. Format resemblance establishes no byte identity, loader route, JIT mechanism, historical fatbin selection, numerical acceptance or performance result. The earlier generated-carrier refusal remains unchanged.
+
+## Observed result
+
+Source `83f6384` completed both declared CPU cases on the inspected installation. The valid case returned **7,360 bytes of wrapped LLVM bitcode**: wrapper version 0, a 20-byte offset to a 7,332-byte body, raw CPU-type field 255 and eight trailing zero bytes. The installed `llvm-dis` 19.1.3 decoded those retained bytes successfully. The IR contains `mcrtc_format_probe` as `metaxgpu_kernel`, target triple `mxc-metax-macahca`, and `xcore1000` target CPU/features for this case. These emitted attributes do not qualify a physical device or a universal default.
+
+The version API reported major/minor **1/0**. The valid log is one NUL byte. The deliberate error returned `MCRTC_ERROR_COMPILATION` (6), producer exit 1, a 207-byte NUL-terminated log containing the marker, and no output buffer. Both destruction calls returned success; both receipts matched their declared cases. The negative remains `compile-failed` even though its receipt checker exits 0.
+
+[Selected observations and API receipts](../../data/inspections/20261008-mcrtc-producer.json) · [Artifact-format context](../../docs/compiled-artifacts.md#mcrtc-returns-a-wrapped-bitcode-buffer-in-a-separate-cpu-probe). This is a different input form from the rejected Clang offload carrier. No module was loaded and no kernel was launched by this probe; q7 and loader acceptance remain untested here.

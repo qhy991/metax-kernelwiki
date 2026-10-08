@@ -259,9 +259,21 @@ Independent analysis decodes 8,960 native-control words and 2,048 failed-attempt
 
 Frozen source passed 229 CPU tests. Both actual input forms passed the public CPU inspection gate, and 12 pre-device host-binary refusals passed. The empty cache listings do not establish the absence of internal runtime work. The loader diagnostic does not qualify its suggested compiler flag, reject all bitcode forms or explain which entry/format/JIT rule rejected this carrier. Nothing was promoted to open-cake-ir, and no performance is accepted.
 
+## 2026-10-09: MCRTC producer serialization observed without module loading
+
+Source `83f6384` adds a standalone host API probe for an independently authored empty kernel. It uses the installed `mcr/mcrtc.h` declarations and `libmcruntime.so` exports, zero headers/options and null pointers as permitted by the installed interface. All four visibility masks are required present and empty before its first MCRTC call. It calls no device enumeration, module-loading or launch API. The library's internal device/context behavior is not profiled. The run ID `20261008-mcrtc-format` uses the UTC date.
+
+The valid source returns producer exit 0 and a **7,360-byte LLVM bitcode wrapper**. Its fields are version 0, body offset 20, body size 7,332 and raw CPU type 255, followed by eight zero bytes. The installed `llvm-dis` 19.1.3 decodes the retained bytes directly. The IR contains `mcrtc_format_probe` as `metaxgpu_kernel`, triple `mxc-metax-macahca`, and `xcore1000` CPU/features for this case. Decoded `source_filename` is `ld-temp.o`; the recorded source/API/output sequence owns source attribution. No q7 source or old carrier is rebuilt.
+
+The version API reports integers 1/0, separately from the SDK directory and host compiler identity. The positive log is one NUL byte. The independent `#error` case returns API compilation code 6 and producer exit 1, with a 207-byte NUL-terminated log containing its marker and no output buffer. The negative remains `compile-failed`; checker exit 0 only confirms that declared control. Eight and six status records are retained respectively; error-string helper calls are additional SDK invocations. Both destruction calls succeed and both observed producer process groups are empty after exit.
+
+[Producer guide](../experiments/mcrtc_format/README.md) · [Format comparison](compiled-artifacts.md#mcrtc-returns-a-wrapped-bitcode-buffer-in-a-separate-cpu-probe) · [Selected API and serialization observation](../data/inspections/20261008-mcrtc-producer.json). Frozen source passed 241 CPU tests; the actual host build and 12 pre-API refusals passed. No GPU lease, module-load or kernel-launch command was submitted. No numerical or performance acceptance and no open-cake-ir promotion occurred.
+
+This producer output has a different outer form from the rejected two-entry Clang carrier. It shares a wrapper convention with the older extracted q7 bitcode, but the source programs and byte extents differ. The observation supplies no q7 byte identity, old fatbin selection or loader/JIT acceptance. The earlier load refusal and numerical failures remain preserved.
+
 ## Next questions
 
 - Establish the earlier fatbin's payload selection or obtain evidence of the final runtime instructions for this C550/SDK pair. The explicit native-module result establishes its own route and does not settle either question.
-- Establish the serialized form produced by the installed MCRTC API using CPU-only evidence before declaring another bitcode input experiment. Preserve the generated-carrier refusal and distinguish producer format, target-entry selection and numerical behavior.
+- Use a separately frozen protocol to test explicit wrapped-bitcode inputs, keeping producer-origin and q7 artifacts distinct. The observed MCRTC format motivates a candidate input form; it does not qualify loading or execution. Preserve the generated-carrier refusal and distinguish producer format, target-entry selection and numerical behavior.
 - Qualify any independent SDK/compiler environment and its allocation/release lifecycle before a numerical comparison. Existing container package or requested-mount metadata alone is insufficient; preserve installed SDKs and production containers.
 - Preserve the original failures, exact oracle and non-performance diagnostic status. Neither a float fragment type nor the scalar source label identifies the native arithmetic mechanism.

@@ -511,5 +511,7 @@ Independent analysis checks 8,960 native-control input/snapshot/payload/guard wo
 
 Frozen source passed 229 CPU tests, both actual input forms passed the CPU preparation gate, and 12 host-binary refusals passed before admission. Both attempted workers, their observed process groups and their lock-PID observations passed release checks. No profiler ran. The bitcode case establishes rejection of this exact carrier on this installed route; it does not establish general bitcode incompatibility, numerical failure, old fatbin selection, native instructions or the arithmetic cause. No performance or open-cake-ir promotion is accepted.
 
+A subsequent [CPU-only MCRTC producer probe](../experiments/mcrtc_format/README.md#observed-result) returns a wrapped LLVM bitcode buffer for a new minimal source, distinct from this constructed carrier. It identifies a producer format without loading q7 or changing this refusal. Any explicit wrapped-bitcode load requires a separately declared experiment.
+
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

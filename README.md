@@ -56,6 +56,7 @@ Each probe guide defines preparation, compilation, device execution, and indepen
 | FP16 inputs, FP32 outputs, and scalar controls | [WMMA diagnostics](experiments/wmma/README.md) |
 | One fixed q7 numerical example, one launch per implementation | [Standalone q7 reproducer](experiments/wmma_q7/README.md) |
 | Explicit native/bitcode input kinds with separate load and numerical checks | [Host-only module driver](experiments/wmma_module/README.md) |
+| CPU-only capture of the installed MCRTC API's returned buffer | [MCRTC producer format](experiments/mcrtc_format/README.md) |
 
 Read the [methodology](docs/methodology.md) before running a probe. Prepare and compile before acquiring a GPU; use the node's existing allocator. Retain device outputs, end the device worker, verify release, then perform host analysis. GPU work follows the [gpu-infra lease lifecycle](https://github.com/qhy991/gpu-infra/blob/main/skills/gpu-infra/SKILL.md#gpu-lease-lifecycle).
 

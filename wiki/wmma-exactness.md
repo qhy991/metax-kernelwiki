@@ -5,7 +5,9 @@
 <!-- kernelwiki:summary:start -->
 ## Current findings
 
-**Scope:** one C550, MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Native FP16 WMMA with a float accumulator fails the tested exact-dyadic contract. Scalar controls are exact in the recorded comparisons. **No WMMA performance result is accepted.** Here q labels the base product pair `(q, -(q+1))/256`. The two-product example `(12,-13)/256` returns `0xbb800001` instead of exact `0xbb800000`.
+**Scope:** one C550, MACA 3.5.3.18 and MXCC `1.0.0 (6477545d4d)`. Native FP16 WMMA with a float accumulator fails the tested exact-dyadic contract. Scalar controls are exact in the recorded comparisons. **No WMMA performance result is accepted.** Here q labels the base product pair `(q, -(q+1))/256`. The two-product example `(7,-8)/256` returns `0xbb800001` instead of exact `0xbb800000`.
+
+**Reproduce the fixed q7 input:** [standalone guide](../experiments/wmma_q7/README.md) · [one-launch results](#standalone-q7-reproducer-one-launch-per-variant). The compact collector retains the mismatch with one launch per implementation.
 
 | Question | Bounded finding | Evidence |
 | --- | --- | --- |
@@ -29,6 +31,7 @@ The cause remains unresolved: these observations do not identify native instruct
 | What changes with placement, signs or magnitudes? | [Components and K slots](#successor-single-products-and-k-slot-permutations) · [Sign configurations](#successor-fixed-magnitude-sign-configurations) · [Fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
 | Does exact scaling change the numerical response? | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal exponents at fixed products](#successor-reciprocal-exponents-with-fixed-products) |
 | Does factor-sign placement change it? | [Sign transfer at fixed products](#successor-transferring-factor-signs-at-fixed-products) |
+| How can I reproduce one concrete input? | [Standalone q7 package and results](#standalone-q7-reproducer-one-launch-per-variant) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
@@ -423,7 +426,42 @@ Overall coverage is 259 logical cases, 506 matrices, 129,536 payload words, 64,7
 
 Frozen probe source passed 190 CPU tests. A separate host-only compilation of its metadata emitter matched 12 protocol fields and all 24 pattern records. Ten native modes compiled in individual retained CPU stages; 42 input/format negatives and three incompatible-mode negatives passed with devices hidden. All **15 device workers and four profiled applications** exited and passed release checks. No result was promoted to open-cake-ir.
 
-A useful next step is a small single-case reproducer for the established q7 witness, preserving the kernel, exact inputs and numerical contract, then validating it as a separate frozen diagnostic. That would make the evidence easier to reproduce and provide a bounded basis for later codegen or qualified SDK comparisons. It has not been implemented or tested here; the current controls do not establish that the larger harness can be removed without affecting the outcome.
+The successor below packages and tests the q7 witness in a standalone single-case collector. The sign-transfer study itself does not establish outcomes for that new host package or launch protocol.
+
+## Standalone q7 reproducer: one launch per variant
+
+Source `9b7bef6` packages the established q7 input in a **241-line standalone C++ collector** and a separate Python standard-library checker. The [reproduction guide](../experiments/wmma_q7/README.md) gives the build, allocated collection and post-release checking commands. The package imports no earlier probe or case-table machinery. Both device kernel bodies are copied from frozen `747c7b5`; unchanged source does not establish binary identity.
+
+The complete inputs remain 1,024 binary16 words each, with four packed 16×16 chunks, A row-major, B column-major and leading dimension 16. Logical M=N=16, K=2 executes one padded K16 step. Only four words are nonzero:
+
+| Operand | Word 0 | Word 1 | Remaining 1,022 words |
+| --- | --- | --- | --- |
+| A | `0xb700` = -7/16 | `0x2c00` = 1/16 | positive zero |
+| B | `0xac00` = -1/16 | `0xb800` = -8/16 | positive zero |
+
+Independent arithmetic gives `(7-8)/256=-1/256` at C00, or `0xbb800000`; the other 255 outputs are zero. The checker requires finite, numerically exact outputs and intact 64-word guards on both sides, with signed output zeros equivalent. **The observed failure word is never the oracle.** Synthetic tests confirm that two exact outputs pass and that either implementation's mismatches remain failed observations.
+
+This is a successor execution protocol: **one launch per implementation, zero warmups and no event timing**, compared with 110 launches per implementation in the earlier study. WMMA uses one full 64-thread block and scalar uses 256 threads. Separate guarded C buffers, a single A/B upload to unchanged allocations, and full before/between/after input readbacks are retained. The collector finishes device work, saves all outputs, frees its buffers and exits before the CPU checker runs.
+
+Two independent processes use opposite implementation orders; a third process is profiled with WMMA first. All three give the same target words:
+
+| Collection | WMMA C00 | Scalar C00 | Unequal WMMA / scalar elements |
+| --- | --- | --- | --- |
+| WMMA first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| Scalar first | `0xbb800001` | `0xbb800000` | 1 / 0 |
+| WMMA-first resource trace | `0xbb800001` | `0xbb800000` | 1 / 0 |
+
+The WMMA value is -0.003906250465661287 versus reference -0.00390625: signed residual **-2^-31**, absolute error **2^-31**, and **one adjacent FP32 step below the reference**. Every other output is numerically zero in both implementations. All payloads are finite, all guards intact, and all 18,432 snapshot halfwords equal both the fixed and prepared inputs. Each complete checker exits 1 with `numeric_failed`; the failed exact status is preserved.
+
+After verifying complete operand equality, all six guarded output buffers match the canonical earlier `sign_transfer_q07_pair_f00` observation from the sign-transfer study's WMMA-first sweep. Complete outputs also agree across the two orders and the profile. This separately built, compact one-launch package therefore reproduces the mismatch on the tested C550 / MACA 3.5.3.18 stack. It does not establish a cold-device result, identical emitted code or an arithmetic cause. The changed host package and launch history must remain explicit; no timing comparison to the earlier 110-launch protocol follows.
+
+The resource trace contains **exactly two GPU kernel events**, one WMMA and one scalar, with no warmup removal. Their descriptors report block64/28 registers and block256/36 registers respectively, zero shared/private memory and one false recompilation flag each. Raw profiler units remain unverified. The collector records no timing batches, and no latency, throughput or speedup is accepted.
+
+The [complete single-case result](../data/results/20261008-wmma-q7-repro.json) contains three paired collections of **one fixed input**, six output matrices, 6,144 prepared halfwords, 18,432 snapshot halfwords, 1,536 payload values and 768 guards: 26,880 actual words. Six kernel launches are declared across the three processes; the two events above are the profiled subset. WMMA is exact in 0/3 matrices, with three unequal elements total; scalar is exact in 3/3. The aggregate remains `correctness.passed=false` and `performance_accepted=false`.
+
+Frozen source passed 209 CPU tests, including 12 new checker/compile-interface tests. A host-only extraction of the actual metadata output statements matched both orders' 16 records using synthetic observed fields; that check was not GPU execution. The single native build and four pre-device CLI/output-directory refusals passed with devices hidden. All three workers and the profiled application exited and passed release checks. Earlier probe files were unchanged; this study validates the new single-case package and retains the older studies as their own evidence. No result was promoted to open-cake-ir.
+
+The retained executable now provides a concrete starting point for CPU-only code-object inspection or a separately qualified compiler/runtime comparison. Inspection should name the actual executed artifact; IR emitted by a new compilation is a separate observation. No such comparison or instruction-level explanation is established by this reproduction.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

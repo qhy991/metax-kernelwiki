@@ -173,8 +173,20 @@ Only three preselected pair conditions have primary traces: q1, q12 and q14. The
 
 Overall: 162 logical cases, 312 matrices and 3,120 batches; scalar 150/150 exact, WMMA 93/162 exact with 829 unequal elements. Numerical acceptance remains failed and performance unaccepted. All 11 workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
 
+## 2026-10-08: Exact power-of-two A scaling
+
+Source `2725811` adds a closed dyadic scale contract at q6/q7/q12 and e=-2,-1,0,1,2, each with positive, negative and paired roles. A alone is multiplied by 2^e; B, K slots and the physical tile stay fixed. Pair references are -2^e/256. The 45 parameter conditions contain 41 distinct complete input pairs because four positive controls coincide across q/scale settings. All old modes and device/launch bodies remain unchanged.
+
+Both full opposite-order sweeps find every standalone control exact. q6 pairs are exact at all five scales; q7 and q12 each have one C00 mismatch with signed residual -2^(e-31). Dividing by 2^e gives -2^-31 throughout these failing cases, and each value is one adjacent FP32 step below its reference. Absolute error varies with scale. All scalar matrices are exact. These finite observations do not identify a rounding mode, internal precision, general scaling law or unique cause. The exact CPU sum of observed component targets matches the reference; it is not a separate GPU addition measurement.
+
+Only q7 pairs at e=-2,0,+2 were profiled. Their buffers match both sweeps, as do all input-alias comparisons. [Full scale table and interpretation](../wiki/wmma-exactness.md#successor-exact-power-of-two-scaling-of-a) · [All actual words and batches](../data/results/20261008-wmma-scales.json). Primary coverage is 93 logical cases and 186 matrices: WMMA70/93 exact with 23 mismatches, scalar93/93 exact. Seven auxiliary suites add 117 logical cases and 222 matrices. All 222 auxiliary and 58 input-matched primary historical comparisons agree, including matches at nonzero exponents.
+
+Overall: 210 logical cases, 408 matrices and 4,080 batches; WMMA128/210 exact with 842 unequal elements, scalar198/198 exact. All snapshots agree, outputs are finite and guards intact. Correctness acceptance remains failed and performance unaccepted. All 12 device workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
+Frozen source passed 172 CPU tests and a separate host C++ encoder check of 155 inputs/four refusals. All eight native builds, 31 input/format negatives and three mode negatives passed before GPU work. The original CPU-build SSH connection closed with exit255; inspection found five completed builds, no compiler processes and three untouched modes. A separate continuation built only those three, preserving all earlier records and the unknown original driver's exit/cause. No GPU stage required a retry.
+
 ## Next questions
 
-- Test exact power-of-two scaling of A at selected q values around the observed q6/q7 transition and the existing q12 baseline, with matched components and a successor dyadic input contract. This proposed comparison preserves relative cancellation while changing absolute scale; it has not been executed. Product-preserving factor/sign transfers remain a separate input question.
+- Compare reciprocal A×2^e / B×2^-e factorization with matched components, preserving the exact products, relative cancellation and reference. This needs a new input contract and has not been executed; the A-only result does not predict its outcome. Product-preserving sign transfers remain another input question.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

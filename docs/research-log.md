@@ -27,9 +27,23 @@
 
 `20261007-trace-01` 发现 mcTracer 3.5.3.18 将绝对 `--odname` 拼到工作目录后，报路径创建失败，但工具退出码仍为 0。失败记录保留。`20261007-trace-02` 在新目录使用相对 `--odname trace`，生成 trace 并通过该次 copy 的完整输出检查。[trace 内容验收](../wiki/profiling.md)确认 1020 个真实 GPU kernel 事件与 host launch 一一对应；导出时间单位仍标为未独立验证，保留原始数值，不转换为已校准的微秒。不能只检查文件存在或工具退出码。
 
+## 2026-10-08：512/1024 函数约束与重编译路径
+
+设备执行和采集于 2026-10-07 完成，次日汇总。后继源码 `088783d` 的 18-case 边界检查通过：1024-thread block 可以正确执行，但默认函数的 `mcFuncGetAttributes.maxThreadsPerBlock` 仍返回 512。单 case trace 则将默认 1024-thread copy 的执行变体报告为 `max_block_size=1024`，在 949 个有此字段的事件中 `is_recompiled=true`，另 72 个事件缺失该字段。
+
+再用同一提交 `bc9f748` 编译默认与显式 `__launch_bounds__(1024)` 两个版本，保持 copy body、block=1024、输入、oracle 和其余编译参数不变。显式版本通过完整 18-case 边界检查；独立 trace 中函数属性变为 1024，949 个有值事件的重编译标志均为 false，新的 binary-cache 目录没有产物。默认对照仍报告 512/重编译标志 true，并产生两个 cache 文件。两个首次 host 完成区间为 164.734/2.659 ms，只有各一次受 profiler 影响的观测，不发布加速倍数。
+
+[机制页](../wiki/launch-bounds.md) · [默认边界和 trace 原始样本](../data/results/20261007-block1024-boundary.json) · [同源显式声明对照](../data/results/20261007-launch-bound-control.json)。
+
+资源方面，第一次旧用户级锁请求被其他卡上的合作任务拒绝，未执行 probe；该失败保留。后继调用器显式使用节点已部署的设备级 owner，以同一套锁协议获取设备 0，没有停止其他任务、删除锁或增加分配器。上述设备进程全部退出并完成释放检查。
+
+文档方面，重新核实了官方 3.5.3.x 运行时指南与 mcTracer 手册；初轮 `/preview/567` 的活动版本实际为 3.0.0.x，已保留追溯备注并修正当前入口。mcTracer 导出时间单位仍未找到明确契约，继续保留原始值。
+
+本轮结论进入本 wiki，没有修改或提升到 open-cake-ir 的 Compiler、Target 或校准。之前 `eb6021e` 的 GitHub CPU workflow 已确认成功；新增控制源码 `bc9f748` 在干净独立 checkout 上通过 39 项 CPU 检查。
+
 ## 下一轮问题
 
-- 设备允许每 block 1024 线程，而这份 kernel 的部分 trace 资源字段报告 `max_block_size=512`。后继源码要检查 512/1024 的编译与运行时行为、完整正确性及是否出现 runtime recompilation，不能把两种上限混为一谈。
-- gather 的跨度与线程地址间距同时改变；设计相同跨度的对照，再检查跨进程稳定性。
-- 核实 mcTracer exporter 的时间单位契约；之后才能把同一次 trace 的 kernel 区间与 event 区间作带单位比较。
-- 这些是本库知识与探针结果；本轮没有向 open-cake-ir 的 Compiler、Target 或校准提升。
+- gather 的跨度与线程地址间距同时改变；设计相同覆盖跨度、相同有效地址集合的对照，分离访问次序与取样集合的影响，再检查跨进程稳定性。
+- 对新 SDK、其他 kernel 或不同形状，不沿用这里的启动时间与最佳 block 推断；需要各自的正确性、资源与运行时路径证据。
+- 继续核实 mcTracer exporter 的时间单位契约；未确认前，不将其原始 duration 作为已校准的微秒。
+- 之后推进 shared memory/transpose 与 64-lane reduction 的可检验机制；没有计数器或代码生成依据时不推断 cache line、bank 数或指令峰值。

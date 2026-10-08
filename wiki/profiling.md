@@ -23,3 +23,7 @@ JSON 没有声明时间单位。安装的 MCPTI 头文件将 activity timestamp 
 去掉 20 个预热后，1000 个 GPU event 的原始 `dur` 为 median 48640，范围 [46848, 52224]。这些数值来自带 tracer 的运行。完整分析见[采集结果](../data/results/20261007-trace-02.json)。
 
 后续需要对 exporter 的单位契约或实现作独立确认，再比较相同采集运行中的 kernel 区间和 event 区间。trace 没有提供已验证的 cache/DRAM 性能计数器，本次不会据此归因访存瓶颈。
+
+## 后继的 512/1024 调查
+
+[launch-bounds 实验](launch-bounds.md)已确认：该默认函数即使以 1024 线程正确执行，runtime 属性也可能继续返回 512；trace 的执行变体字段与显式函数声明需分别记录。新增 `--initial-launches 1` 用于分离首发诊断与随后 20 次预热。汇总脚本只剔除一个连续前缀，必须用于单 case trace，不能把混合 sweep 的预热总数当成一个前缀。

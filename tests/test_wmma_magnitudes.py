@@ -206,7 +206,7 @@ class WmmaMagnitudesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);stub=root/'mxcc-stub';stub.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n');stub.chmod(0o700)
             base=dict(os.environ,MXCC=str(stub),C550_ARCH='xcore1000')
-            for control,prefix,mode,accepted in ((1,0,4,True),(0,0,4,False),(1,1,4,False),(1,0,7,False),(1,0,-1,False)):
+            for control,prefix,mode,accepted in ((1,0,4,True),(0,0,4,False),(1,1,4,False),(1,0,8,False),(1,0,-1,False)):
                 env=dict(base,C550_WMMA_CONTROL=str(control),C550_WMMA_PREFIX=str(prefix),C550_WMMA_WITNESS=str(mode))
                 result=subprocess.run(['bash',str(MODULE.with_name('compile.sh')),str(root/'probe')],env=env,text=True,capture_output=True)
                 with self.subTest(control=control,prefix=prefix,mode=mode):

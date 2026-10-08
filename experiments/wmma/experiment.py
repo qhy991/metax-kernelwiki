@@ -80,6 +80,16 @@ RECIPROCAL_CASES = {
 }
 RECIPROCAL_PATTERNS = {pattern:MAGNITUDE_PATTERNS[f"q{q:02d}-{role}"]
                        for pattern,(q,ae,be,role) in RECIPROCAL_CASES.items()}
+SIGN_TRANSFER_EXPERIMENT = "wmma-scalar-fp32-sign-transfer-control"
+SIGN_TRANSFER_SUITE = "sign-transfer-control"
+SIGN_TRANSFER_FLIPS = {"positive":((0,0),(1,0)),"negative":((0,0),(0,1)),"pair":((0,0),(1,0),(0,1),(1,1))}
+SIGN_TRANSFER_CASES = {f"q{q:02d}-{role}-f{f0}{f1}":(q,role,f0,f1)
+                       for q in SCALE_Q_VALUES for role in MAGNITUDE_ROLES for f0,f1 in SIGN_TRANSFER_FLIPS[role]}
+SIGN_TRANSFER_PATTERNS = {
+    pattern:tuple(tuple(value*(-1 if flip else 1) for value,flip in zip(values,(f0,f1)))
+                  for values in MAGNITUDE_PATTERNS[f"q{q:02d}-{role}"])
+    for pattern,(q,role,f0,f1) in SIGN_TRANSFER_CASES.items()
+}
 # The closed row0/column0 ordered-pair suites share this implementation.
 ORDERED_PATTERN_SUITES = {
     PRODUCT_SUITE: ("product",PRODUCT_PATTERNS,"isolated-ordered-products",2),
@@ -87,6 +97,7 @@ ORDERED_PATTERN_SUITES = {
     MAGNITUDE_SUITE: ("magnitude",MAGNITUDE_PATTERNS,"isolated-adjacent-magnitudes",4),
     SCALE_SUITE: ("scale",SCALE_PATTERNS,"isolated-a-power-of-two-scale",5),
     RECIPROCAL_SUITE: ("reciprocal",RECIPROCAL_PATTERNS,"isolated-reciprocal-power-of-two-scale",6),
+    SIGN_TRANSFER_SUITE: ("sign-transfer",SIGN_TRANSFER_PATTERNS,"isolated-product-preserving-sign-transfer",7),
 }
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
@@ -99,6 +110,7 @@ SIGN_COLUMNS = WITNESS_COLUMNS
 MAGNITUDE_COLUMNS = ("id","m","n","k","suite","pattern","q","role","target_row","target_col","input_rule","order","warmups","samples","launches")
 SCALE_COLUMNS = ("id","m","n","k","suite","pattern","q","scale_exp","role","target_row","target_col","input_rule","order","warmups","samples","launches")
 RECIPROCAL_COLUMNS = ("id","m","n","k","suite","pattern","q","a_scale_exp","b_scale_exp","role","target_row","target_col","input_rule","order","warmups","samples","launches")
+SIGN_TRANSFER_COLUMNS = ("id","m","n","k","suite","pattern","q","role","flip_k0","flip_k1","target_row","target_col","input_rule","order","warmups","samples","launches")
 ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
 SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
@@ -207,14 +219,19 @@ def read_reciprocal_plan(path: Path) -> list[dict]:
     return _read_pattern_plan(path,RECIPROCAL_SUITE)
 
 
+def read_sign_transfer_plan(path: Path) -> list[dict]:
+    return _read_pattern_plan(path,SIGN_TRANSFER_SUITE)
+
+
 def _read_pattern_plan(path: Path, suite: str) -> list[dict]:
     label,maximum,validate={WITNESS_SUITE:("witness",3,validate_witness_case),
                             PRODUCT_SUITE:("product",6,validate_product_case),
                             SIGN_SUITE:("sign",8,validate_sign_case),
                             MAGNITUDE_SUITE:("magnitude",42,validate_magnitude_case),
                             SCALE_SUITE:("scale",45,validate_scale_case),
-                            RECIPROCAL_SUITE:("reciprocal",45,validate_reciprocal_case)}[suite]
-    columns=RECIPROCAL_COLUMNS if suite==RECIPROCAL_SUITE else SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS
+                            RECIPROCAL_SUITE:("reciprocal",45,validate_reciprocal_case),
+                            SIGN_TRANSFER_SUITE:("sign-transfer",24,validate_sign_transfer_case)}[suite]
+    columns=SIGN_TRANSFER_COLUMNS if suite==SIGN_TRANSFER_SUITE else RECIPROCAL_COLUMNS if suite==RECIPROCAL_SUITE else SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS
     with path.open(newline="") as handle:
         reader=csv.DictReader(handle,delimiter="\t")
         if tuple(reader.fieldnames or ())!=columns:
@@ -305,6 +322,10 @@ def validate_reciprocal_case(case: dict) -> None:
     _validate_ordered_case(case,RECIPROCAL_SUITE)
 
 
+def validate_sign_transfer_case(case: dict) -> None:
+    _validate_ordered_case(case,SIGN_TRANSFER_SUITE)
+
+
 def _validate_ordered_case(case: dict, suite: str) -> None:
     label,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
     invalid_binding=suite==MAGNITUDE_SUITE and (type(case.get("q")) is not int
@@ -315,11 +336,14 @@ def _validate_ordered_case(case: dict, suite: str) -> None:
     if suite==RECIPROCAL_SUITE:
         invalid_binding=(any(type(case.get(key)) is not int for key in ("q","a_scale_exp","b_scale_exp"))
                          or (case.get("q"),case.get("a_scale_exp"),case.get("b_scale_exp"),case.get("role"))!=RECIPROCAL_CASES.get(case.get("pattern")))
+    if suite==SIGN_TRANSFER_SUITE:
+        invalid_binding=(any(type(case.get(key)) is not int for key in ("q","flip_k0","flip_k1"))
+                         or (case.get("q"),case.get("role"),case.get("flip_k0"),case.get("flip_k1"))!=SIGN_TRANSFER_CASES.get(case.get("pattern")))
     if (invalid_binding or case.get("suite")!=suite or case.get("pattern") not in patterns
             or any(type(case.get(field)) is not int for field in ("m","n","k","target_row","target_col"))
             or (case["m"],case["n"],case["k"],case["target_row"],case["target_col"])!=(16,16,2,0,0)
             or case.get("input_rule")!=rule):
-        fields="Shape, q, a_scale_exp, b_scale_exp, role, pattern, target or input rule" if suite==RECIPROCAL_SUITE else "Shape, q, scale_exp, role, pattern, target or input rule" if suite==SCALE_SUITE else "Shape, q, role, pattern, target or input rule" if suite==MAGNITUDE_SUITE else "Shape, pattern, target or input rule"
+        fields="Shape, q, role, flip_k0, flip_k1, pattern, target or input rule" if suite==SIGN_TRANSFER_SUITE else "Shape, q, a_scale_exp, b_scale_exp, role, pattern, target or input rule" if suite==RECIPROCAL_SUITE else "Shape, q, scale_exp, role, pattern, target or input rule" if suite==SCALE_SUITE else "Shape, q, role, pattern, target or input rule" if suite==MAGNITUDE_SUITE else "Shape, pattern, target or input rule"
         raise ValueError(f"{fields} outside the fixed WMMA {label} cases")
 
 
@@ -343,11 +367,15 @@ def reciprocal_cases(order: str = "wmma-first") -> list[dict]:
     return _ordered_cases(RECIPROCAL_SUITE,order)
 
 
+def sign_transfer_cases(order: str = "wmma-first") -> list[dict]:
+    return _ordered_cases(SIGN_TRANSFER_SUITE,order)
+
+
 def _ordered_cases(suite: str, order: str) -> list[dict]:
     if order not in ORDERS:
         raise ValueError("Unknown WMMA/scalar variant order")
     label,patterns,rule,_=ORDERED_PATTERN_SUITES[suite]
-    cases=[dict(id=label+"_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=suite,
+    cases=[dict(id=label.replace("-","_")+"_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=suite,
                  pattern=pattern,target_row=0,target_col=0,input_rule=rule,order=order,
                  warmups=10,samples=10,launches=10) for pattern in patterns]
     if suite==MAGNITUDE_SUITE:
@@ -359,6 +387,9 @@ def _ordered_cases(suite: str, order: str) -> list[dict]:
     if suite==RECIPROCAL_SUITE:
         for case in cases:
             case["q"],case["a_scale_exp"],case["b_scale_exp"],case["role"]=RECIPROCAL_CASES[case["pattern"]]
+    if suite==SIGN_TRANSFER_SUITE:
+        for case in cases:
+            case["q"],case["role"],case["flip_k0"],case["flip_k1"]=SIGN_TRANSFER_CASES[case["pattern"]]
     return cases
 
 
@@ -380,6 +411,10 @@ def scale_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
 
 def reciprocal_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
     return _ordered_packed_inputs(case,RECIPROCAL_SUITE)
+
+
+def sign_transfer_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
+    return _ordered_packed_inputs(case,SIGN_TRANSFER_SUITE)
 
 
 def _ordered_packed_inputs(case: dict, suite: str) -> tuple[list[int],list[int]]:
@@ -416,6 +451,10 @@ def validate_reciprocal_inputs(case: dict, a: list[int], b: list[int]) -> dict:
     return _validate_ordered_inputs(case,a,b,RECIPROCAL_SUITE)
 
 
+def validate_sign_transfer_inputs(case: dict, a: list[int], b: list[int]) -> dict:
+    return _validate_ordered_inputs(case,a,b,SIGN_TRANSFER_SUITE)
+
+
 def _validate_ordered_inputs(case: dict, a: list[int], b: list[int], suite: str) -> dict:
     expected=_ordered_packed_inputs(case,suite)
     suite_label=ORDERED_PATTERN_SUITES[suite][0]
@@ -447,6 +486,10 @@ def reciprocal_reference_output(case: dict) -> list[float]:
     return _ordered_reference_output(case,RECIPROCAL_SUITE)
 
 
+def sign_transfer_reference_output(case: dict) -> list[float]:
+    return _ordered_reference_output(case,SIGN_TRANSFER_SUITE)
+
+
 def _ordered_reference_output(case: dict, suite: str) -> list[float]:
     """Two logical integer products; no packed-array or kernel indexing is reused."""
     _validate_ordered_case(case,suite)
@@ -476,6 +519,20 @@ def scale_pattern_contracts() -> list[dict]:
 
 def reciprocal_pattern_contracts() -> list[dict]:
     return _ordered_pattern_contracts(RECIPROCAL_SUITE)
+
+
+def sign_transfer_pattern_contracts() -> list[dict]:
+    return _ordered_pattern_contracts(SIGN_TRANSFER_SUITE)
+
+
+@lru_cache(maxsize=24)
+def _sign_transfer_matching_reciprocal_patterns(pattern: str) -> tuple[str,...]:
+    left,right=SIGN_TRANSFER_PATTERNS[pattern]
+    a=[halfword(x) for x in left]+[0]*1022
+    b=[halfword(x) for x in right]+[0]*1022
+    return tuple(name for name,(old_a,old_b) in RECIPROCAL_PATTERNS.items()
+                 if a==[scaled_halfword(x,RECIPROCAL_CASES[name][1]) for x in old_a]+[0]*1022
+                 and b==[scaled_halfword(x,RECIPROCAL_CASES[name][2]) for x in old_b]+[0]*1022)
 
 
 @lru_cache(maxsize=45)
@@ -522,7 +579,7 @@ def _ordered_pattern_contracts(suite: str) -> list[dict]:
                            k_slots=[0,1],a_numerators=list(left),b_numerators=list(right),product_numerators=products,
                            nonzero_product_k_slots=[k for k,value in enumerate(products) if value!=0],
                  target_reference_numerator=sum(products))
-        if suite in (SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE):
+        if suite in (SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE,SIGN_TRANSFER_SUITE):
             row.update(product_signs=[(value>0)-(value<0) for value in products],
                        product_magnitudes=[abs(value) for value in products])
         if suite==SIGN_SUITE:
@@ -543,6 +600,14 @@ def _ordered_pattern_contracts(suite: str) -> list[dict]:
                        a_denominator=16*ad,b_denominator=16*bd,product_denominator=256*ad*bd,
                        target_reference_denominator=256*ad*bd,
                        matching_scale_patterns=list(_reciprocal_matching_scale_patterns(pattern)))
+        if suite==SIGN_TRANSFER_SUITE:
+            q,role,f0,f1=SIGN_TRANSFER_CASES[pattern]
+            original_a,original_b=MAGNITUDE_PATTERNS[f"q{q:02d}-{role}"]
+            row.update(q=q,role=role,flip_k0=f0,flip_k1=f1,
+                       a_base_numerators=list(original_a),b_base_numerators=list(original_b),
+                       transfer_multipliers=[-1 if f0 else 1,-1 if f1 else 1],
+                       a_denominator=16,b_denominator=16,product_denominator=256,target_reference_denominator=256,
+                       matching_reciprocal_patterns=list(_sign_transfer_matching_reciprocal_patterns(pattern)))
         result.append(row)
     return result
 
@@ -565,6 +630,10 @@ def scale_case_fields(case: dict) -> dict:
 
 def reciprocal_case_fields(case: dict) -> dict:
     return _ordered_case_fields(case,RECIPROCAL_SUITE)
+
+
+def sign_transfer_case_fields(case: dict) -> dict:
+    return _ordered_case_fields(case,SIGN_TRANSFER_SUITE)
 
 
 def _ordered_case_fields(case: dict, suite: str) -> dict:
@@ -618,10 +687,19 @@ def reciprocal_protocol_metadata() -> dict:
                 baseline_scope="matching_scale_patterns lists every complete declared A/B word match among all prior scale patterns, including aliases; actual historical equality must be checked separately")
 
 
+def sign_transfer_protocol_metadata() -> dict:
+    return dict(witness_mode=7,suite=SIGN_TRANSFER_SUITE,sign_transfer_patterns=sign_transfer_pattern_contracts(),
+                logical_shape=[16,16,2],maximum_cases=24,input_scale_denominator=16,target_reference_denominator=256,
+                q_values=list(SCALE_Q_VALUES),roles=list(MAGNITUDE_ROLES),
+                allowed_role_flips={role:[list(flags) for flags in flips] for role,flips in SIGN_TRANSFER_FLIPS.items()},
+                sign_transfer_rule="each active flip multiplies both A[k] and B[k] by -1; inactive flips are zero and all other input words are positive zero",
+                baseline_scope="matching_reciprocal_patterns lists every complete declared A/B word match among all prior reciprocal patterns; actual historical equality must be checked separately")
+
+
 def _ordered_protocol_metadata(suite: str) -> dict:
     return {PRODUCT_SUITE:product_protocol_metadata,SIGN_SUITE:sign_protocol_metadata,
             MAGNITUDE_SUITE:magnitude_protocol_metadata,SCALE_SUITE:scale_protocol_metadata,
-            RECIPROCAL_SUITE:reciprocal_protocol_metadata}[suite]()
+            RECIPROCAL_SUITE:reciprocal_protocol_metadata,SIGN_TRANSFER_SUITE:sign_transfer_protocol_metadata}[suite]()
 
 
 def halfword(numerator: int) -> int:
@@ -710,7 +788,7 @@ def oracle_metadata() -> dict:
 
 
 def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -> dict:
-    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE) or prefix):
+    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE,SIGN_TRANSFER_SUITE) or prefix):
         raise ValueError("Unknown or incompatible paired control suite")
     result = {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
             "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
@@ -737,7 +815,7 @@ def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -
     if suite in ORDERED_PATTERN_SUITES:
         result.pop("a_rule");result.pop("b_rule")
         protocol=_ordered_protocol_metadata(suite)
-        experiment={PRODUCT_SUITE:PRODUCT_EXPERIMENT,SIGN_SUITE:SIGN_EXPERIMENT,MAGNITUDE_SUITE:MAGNITUDE_EXPERIMENT,SCALE_SUITE:SCALE_EXPERIMENT,RECIPROCAL_SUITE:RECIPROCAL_EXPERIMENT}[suite]
+        experiment={PRODUCT_SUITE:PRODUCT_EXPERIMENT,SIGN_SUITE:SIGN_EXPERIMENT,MAGNITUDE_SUITE:MAGNITUDE_EXPERIMENT,SCALE_SUITE:SCALE_EXPERIMENT,RECIPROCAL_SUITE:RECIPROCAL_EXPERIMENT,SIGN_TRANSFER_SUITE:SIGN_TRANSFER_EXPERIMENT}[suite]
         result.update(experiment=experiment,**protocol,
                       reference="only C00 is the sum of the two declared integer products/256; all other outputs are zero",
                       target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping",
@@ -766,7 +844,7 @@ def prefix_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
-    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE) or (suite=="default" and order is not None):
+    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE,SIGN_TRANSFER_SUITE) or (suite=="default" and order is not None):
         raise ValueError("Order is only supported by paired control suites")
     prefix = suite==PREFIX_SUITE
     witness = suite==WITNESS_SUITE
@@ -782,7 +860,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        columns=RECIPROCAL_COLUMNS if suite==RECIPROCAL_SUITE else SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
+        columns=SIGN_TRANSFER_COLUMNS if suite==SIGN_TRANSFER_SUITE else RECIPROCAL_COLUMNS if suite==RECIPROCAL_SUITE else SCALE_COLUMNS if suite==SCALE_SUITE else MAGNITUDE_COLUMNS if suite==MAGNITUDE_SUITE else WITNESS_COLUMNS if pattern_suite else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
         writer=csv.DictWriter(handle,fieldnames=columns,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
@@ -800,7 +878,7 @@ def prepare(destination: Path, suite: str = "default", order: str | None = None)
 
 def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None = None) -> None:
     if suite is not None:
-        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE) or prefix:
+        if suite not in (WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE,SIGN_TRANSFER_SUITE) or prefix:
             raise ValueError("Unknown or incompatible paired control suite")
         if suite in ORDERED_PATTERN_SUITES:
             _validate_ordered_case(case,suite)
@@ -1137,6 +1215,8 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata(suite=SIGN_TRANSFER_SUITE):
+        return check_control(input_directory,output_directory,suite=SIGN_TRANSFER_SUITE)
     if oracle==control_oracle_metadata(suite=RECIPROCAL_SUITE):
         return check_control(input_directory,output_directory,suite=RECIPROCAL_SUITE)
     if oracle==control_oracle_metadata(suite=SCALE_SUITE):
@@ -1185,7 +1265,7 @@ def main() -> int:
     commands=parser.add_subparsers(dest="command",required=True)
     preparation=commands.add_parser("prepare")
     preparation.add_argument("directory",type=Path)
-    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE),default="default")
+    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE,SIGN_SUITE,MAGNITUDE_SUITE,SCALE_SUITE,RECIPROCAL_SUITE,SIGN_TRANSFER_SUITE),default="default")
     preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)

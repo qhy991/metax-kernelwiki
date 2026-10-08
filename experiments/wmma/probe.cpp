@@ -34,8 +34,8 @@
 #ifndef C550_WMMA_WITNESS
 #define C550_WMMA_WITNESS 0
 #endif
-#if C550_WMMA_WITNESS < 0 || C550_WMMA_WITNESS > 6
-#error "C550_WMMA_WITNESS must be 0, 1, 2, 3, 4, 5 or 6"
+#if C550_WMMA_WITNESS < 0 || C550_WMMA_WITNESS > 7
+#error "C550_WMMA_WITNESS must be 0, 1, 2, 3, 4, 5, 6 or 7"
 #endif
 #if C550_WMMA_WITNESS && (!C550_WMMA_CONTROL || C550_WMMA_PREFIX)
 #error "C550_WMMA_WITNESS requires C550_WMMA_CONTROL=1 and C550_WMMA_PREFIX=0"
@@ -45,7 +45,8 @@ namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
-constexpr const char* kExperiment = C550_WMMA_WITNESS == 6 ? "wmma-scalar-fp32-reciprocal-control"
+constexpr const char* kExperiment = C550_WMMA_WITNESS == 7 ? "wmma-scalar-fp32-sign-transfer-control"
+                                 : C550_WMMA_WITNESS == 6 ? "wmma-scalar-fp32-reciprocal-control"
                                  : C550_WMMA_WITNESS == 5 ? "wmma-scalar-fp32-scale-control"
                                  : C550_WMMA_WITNESS == 4 ? "wmma-scalar-fp32-magnitude-control"
                                  : C550_WMMA_WITNESS == 3 ? "wmma-scalar-fp32-sign-control"
@@ -55,8 +56,9 @@ constexpr const char* kExperiment = C550_WMMA_WITNESS == 6 ? "wmma-scalar-fp32-r
                                  : C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
 #if C550_WMMA_WITNESS
-constexpr const char* kPatternLabel = C550_WMMA_WITNESS == 6 ? "reciprocal" : C550_WMMA_WITNESS == 5 ? "scale" : C550_WMMA_WITNESS == 4 ? "magnitude" : C550_WMMA_WITNESS == 3 ? "sign" : C550_WMMA_WITNESS == 2 ? "product" : "witness";
-constexpr unsigned kPatternMaximum = C550_WMMA_WITNESS >= 5 ? 45 : C550_WMMA_WITNESS == 4 ? 42 : C550_WMMA_WITNESS == 3 ? 8 : C550_WMMA_WITNESS == 2 ? 6 : 3;
+constexpr const char* kPatternLabel = C550_WMMA_WITNESS == 7 ? "sign-transfer" : C550_WMMA_WITNESS == 6 ? "reciprocal" : C550_WMMA_WITNESS == 5 ? "scale" : C550_WMMA_WITNESS == 4 ? "magnitude" : C550_WMMA_WITNESS == 3 ? "sign" : C550_WMMA_WITNESS == 2 ? "product" : "witness";
+constexpr const char* kPatternFieldLabel = C550_WMMA_WITNESS == 7 ? "sign_transfer" : kPatternLabel;
+constexpr unsigned kPatternMaximum = C550_WMMA_WITNESS == 7 ? 24 : C550_WMMA_WITNESS >= 5 ? 45 : C550_WMMA_WITNESS == 4 ? 42 : C550_WMMA_WITNESS == 3 ? 8 : C550_WMMA_WITNESS == 2 ? 6 : 3;
 #endif
 
 void check_mc(mcError_t status, const char* expression) {
@@ -105,6 +107,9 @@ struct Case {
 #if C550_WMMA_WITNESS == 6
     int a_scale_exp = 0, b_scale_exp = 0;
 #endif
+#if C550_WMMA_WITNESS == 7
+    int flip_k0 = 0, flip_k1 = 0;
+#endif
     unsigned m = 0, n = 0, k = 0, warmups = 0, samples = 0, launches = 0;
     std::vector<uint16_t> a, b;
 };
@@ -115,6 +120,7 @@ struct ProductPattern {
     unsigned q = 0; const char* role = nullptr; const char* matching_sign_pattern = nullptr;
     int scale_exp = 0; const char* matching_magnitude_pattern = nullptr;
     int b_scale_exp = 0; const char* matching_scale_first = nullptr; const char* matching_scale_second = nullptr;
+    int flip_k0 = 0, flip_k1 = 0; const char* matching_reciprocal_pattern = nullptr;
 };
 #if C550_WMMA_WITNESS == 2
 constexpr ProductPattern kProductPatterns[] = {
@@ -160,7 +166,7 @@ constexpr ProductPattern kProductPatterns[] = {
     SCALE_ROW(12, "q12", 2, "ep2", nullptr)
 };
 #undef SCALE_ROW
-#else
+#elif C550_WMMA_WITNESS == 6
 #define RECIPROCAL_ROW(Q, NAME, E, ATAG, BTAG, MATCH1, MATCH2) \
     {NAME "-" ATAG "-" BTAG "-positive", {-(Q),0}, {-1,0}, nullptr, Q, "positive", nullptr, E, nullptr, -(E), MATCH1, MATCH2}, \
     {NAME "-" ATAG "-" BTAG "-negative", {0,1}, {0,-((Q)+1)}, nullptr, Q, "negative", nullptr, E, nullptr, -(E), E == 0 ? NAME "-e0-negative" : nullptr}, \
@@ -183,9 +189,30 @@ constexpr ProductPattern kProductPatterns[] = {
     RECIPROCAL_ROW(12, "q12", 2, "ap2", "bm2", nullptr, nullptr)
 };
 #undef RECIPROCAL_ROW
+#else
+constexpr ProductPattern sign_transfer_pattern(const char* name, unsigned q, const char* role,
+        int a0, int a1, int b0, int b1, int f0, int f1, const char* prior) {
+    ProductPattern result{name, {a0,a1}, {b0,b1}};
+    result.q = q; result.role = role; result.flip_k0 = f0; result.flip_k1 = f1;
+    result.matching_reciprocal_pattern = prior;
+    return result;
+}
+#define SIGN_TRANSFER_ROW(Q, NAME) \
+    sign_transfer_pattern(NAME "-positive-f00", Q, "positive", -(Q),0,-1,0,0,0, NAME "-a0-b0-positive"), \
+    sign_transfer_pattern(NAME "-positive-f10", Q, "positive", -(Q),0,-1,0,1,0, nullptr), \
+    sign_transfer_pattern(NAME "-negative-f00", Q, "negative", 0,1,0,-((Q)+1),0,0, NAME "-a0-b0-negative"), \
+    sign_transfer_pattern(NAME "-negative-f01", Q, "negative", 0,1,0,-((Q)+1),0,1, nullptr), \
+    sign_transfer_pattern(NAME "-pair-f00", Q, "pair", -(Q),1,-1,-((Q)+1),0,0, NAME "-a0-b0-pair"), \
+    sign_transfer_pattern(NAME "-pair-f10", Q, "pair", -(Q),1,-1,-((Q)+1),1,0, nullptr), \
+    sign_transfer_pattern(NAME "-pair-f01", Q, "pair", -(Q),1,-1,-((Q)+1),0,1, nullptr), \
+    sign_transfer_pattern(NAME "-pair-f11", Q, "pair", -(Q),1,-1,-((Q)+1),1,1, nullptr),
+constexpr ProductPattern kProductPatterns[] = {
+    SIGN_TRANSFER_ROW(6, "q06") SIGN_TRANSFER_ROW(7, "q07") SIGN_TRANSFER_ROW(12, "q12")
+};
+#undef SIGN_TRANSFER_ROW
 #endif
-constexpr const char* kOrderedSuite = C550_WMMA_WITNESS == 6 ? "reciprocal-control" : C550_WMMA_WITNESS == 5 ? "scale-control" : C550_WMMA_WITNESS == 4 ? "magnitude-control" : C550_WMMA_WITNESS == 3 ? "sign-control" : "product-control";
-constexpr const char* kOrderedRule = C550_WMMA_WITNESS == 6 ? "isolated-reciprocal-power-of-two-scale" : C550_WMMA_WITNESS == 5 ? "isolated-a-power-of-two-scale" : C550_WMMA_WITNESS == 4 ? "isolated-adjacent-magnitudes" : C550_WMMA_WITNESS == 3 ? "isolated-signed-products" : "isolated-ordered-products";
+constexpr const char* kOrderedSuite = C550_WMMA_WITNESS == 7 ? "sign-transfer-control" : C550_WMMA_WITNESS == 6 ? "reciprocal-control" : C550_WMMA_WITNESS == 5 ? "scale-control" : C550_WMMA_WITNESS == 4 ? "magnitude-control" : C550_WMMA_WITNESS == 3 ? "sign-control" : "product-control";
+constexpr const char* kOrderedRule = C550_WMMA_WITNESS == 7 ? "isolated-product-preserving-sign-transfer" : C550_WMMA_WITNESS == 6 ? "isolated-reciprocal-power-of-two-scale" : C550_WMMA_WITNESS == 5 ? "isolated-a-power-of-two-scale" : C550_WMMA_WITNESS == 4 ? "isolated-adjacent-magnitudes" : C550_WMMA_WITNESS == 3 ? "isolated-signed-products" : "isolated-ordered-products";
 
 const ProductPattern* product_pattern(const std::string& name) {
     for (const auto& pattern : kProductPatterns)
@@ -194,10 +221,12 @@ const ProductPattern* product_pattern(const std::string& name) {
 }
 
 void product_terms(std::ostream& records, const ProductPattern& pattern) {
-    const int scale_num = C550_WMMA_WITNESS >= 5 ? 1 << (pattern.scale_exp > 0 ? pattern.scale_exp : 0) : 1;
+    const int scale_num = (C550_WMMA_WITNESS == 5 || C550_WMMA_WITNESS == 6) ? 1 << (pattern.scale_exp > 0 ? pattern.scale_exp : 0) : 1;
     const int b_scale_num = C550_WMMA_WITNESS == 6 ? 1 << (pattern.b_scale_exp > 0 ? pattern.b_scale_exp : 0) : 1;
-    const int a0 = pattern.a[0] * scale_num, a1 = pattern.a[1] * scale_num;
-    const int b0 = pattern.b[0] * b_scale_num, b1 = pattern.b[1] * b_scale_num;
+    const int multiplier0 = C550_WMMA_WITNESS == 7 && pattern.flip_k0 ? -1 : 1;
+    const int multiplier1 = C550_WMMA_WITNESS == 7 && pattern.flip_k1 ? -1 : 1;
+    const int a0 = pattern.a[0] * scale_num * multiplier0, a1 = pattern.a[1] * scale_num * multiplier1;
+    const int b0 = pattern.b[0] * b_scale_num * multiplier0, b1 = pattern.b[1] * b_scale_num * multiplier1;
     const int p0 = a0 * b0, p1 = a1 * b1;
     records << ",\"k_slots\":[0,1],\"a_numerators\":[" << a0 << ',' << a1
             << "],\"b_numerators\":[" << b0 << ',' << b1
@@ -225,7 +254,7 @@ void product_terms(std::ostream& records, const ProductPattern& pattern) {
             << ",\"product_denominator\":" << 256 * scale_den << ",\"target_reference_denominator\":" << 256 * scale_den
             << ",\"matching_magnitude_pattern\":"
             << (pattern.matching_magnitude_pattern ? json_string(pattern.matching_magnitude_pattern) : "null");
-#else
+#elif C550_WMMA_WITNESS == 6
     const int a_den = 1 << (pattern.scale_exp < 0 ? -pattern.scale_exp : 0);
     const int b_den = 1 << (pattern.b_scale_exp < 0 ? -pattern.b_scale_exp : 0);
     records << ",\"q\":" << pattern.q << ",\"a_scale_exp\":" << pattern.scale_exp << ",\"b_scale_exp\":" << pattern.b_scale_exp
@@ -239,6 +268,16 @@ void product_terms(std::ostream& records, const ProductPattern& pattern) {
             << ",\"matching_scale_patterns\":[";
     if (pattern.matching_scale_first) records << json_string(pattern.matching_scale_first);
     if (pattern.matching_scale_second) records << ',' << json_string(pattern.matching_scale_second);
+    records << ']';
+#else
+    records << ",\"q\":" << pattern.q << ",\"role\":" << json_string(pattern.role)
+            << ",\"flip_k0\":" << pattern.flip_k0 << ",\"flip_k1\":" << pattern.flip_k1
+            << ",\"a_base_numerators\":[" << pattern.a[0] << ',' << pattern.a[1] << ']'
+            << ",\"b_base_numerators\":[" << pattern.b[0] << ',' << pattern.b[1] << ']'
+            << ",\"transfer_multipliers\":[" << multiplier0 << ',' << multiplier1 << ']'
+            << ",\"a_denominator\":16,\"b_denominator\":16,\"product_denominator\":256,\"target_reference_denominator\":256,"
+               "\"matching_reciprocal_patterns\":[";
+    if (pattern.matching_reciprocal_pattern) records << json_string(pattern.matching_reciprocal_pattern);
     records << ']';
 #endif
 #endif
@@ -259,6 +298,9 @@ bool admitted_shape(const Case& c) {
 #endif
 #if C550_WMMA_WITNESS == 6
         && c.a_scale_exp == pattern->scale_exp && c.b_scale_exp == pattern->b_scale_exp
+#endif
+#if C550_WMMA_WITNESS == 7
+        && c.flip_k0 == pattern->flip_k0 && c.flip_k1 == pattern->flip_k1
 #endif
         ;
 #elif C550_WMMA_WITNESS == 1
@@ -338,6 +380,12 @@ void validate_inputs(const Case& c) {
                 const auto& pattern = *product_pattern(c.pattern);  // Admission already resolved the closed pattern.
                 a_num = outer == 0 && k < 2 ? pattern.a[k] : 0;
                 b_num = outer == 0 && k < 2 ? pattern.b[k] : 0;
+#if C550_WMMA_WITNESS == 7
+                if (outer == 0 && k < 2) {
+                    const int multiplier = (k == 0 ? pattern.flip_k0 : pattern.flip_k1) ? -1 : 1;
+                    a_num *= multiplier; b_num *= multiplier;
+                }
+#endif
 #elif C550_WMMA_WITNESS == 1
                 if (c.pattern != "dense-origin") {
                     const int a_pair[] = {-12, 1}, b_pair[] = {-1, -13};
@@ -365,7 +413,8 @@ void validate_inputs(const Case& c) {
 std::vector<Case> read_plan(const std::string& directory) {
     std::ifstream file(directory + "/cases.tsv");
     std::string line;
-    const char* header = C550_WMMA_WITNESS == 6 ? "id\tm\tn\tk\tsuite\tpattern\tq\ta_scale_exp\tb_scale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
+    const char* header = C550_WMMA_WITNESS == 7 ? "id\tm\tn\tk\tsuite\tpattern\tq\trole\tflip_k0\tflip_k1\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
+                        : C550_WMMA_WITNESS == 6 ? "id\tm\tn\tk\tsuite\tpattern\tq\ta_scale_exp\tb_scale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_WITNESS == 5 ? "id\tm\tn\tk\tsuite\tpattern\tq\tscale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_WITNESS == 4 ? "id\tm\tn\tk\tsuite\tpattern\tq\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_WITNESS ? "id\tm\tn\tk\tsuite\tpattern\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
@@ -384,7 +433,11 @@ std::vector<Case> read_plan(const std::string& directory) {
         Case c;
         std::string trailing;
 #if C550_WMMA_CONTROL
-#if C550_WMMA_WITNESS == 6
+#if C550_WMMA_WITNESS == 7
+        if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.q >> c.role >> c.flip_k0 >> c.flip_k1 >> c.target_row >> c.target_col
+                  >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
+            throw std::runtime_error("Invalid sign-transfer-control case row");
+#elif C550_WMMA_WITNESS == 6
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.q >> c.a_scale_exp >> c.b_scale_exp >> c.role >> c.target_row >> c.target_col
                   >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid reciprocal-control case row");
@@ -422,7 +475,8 @@ std::vector<Case> read_plan(const std::string& directory) {
                 throw std::runtime_error(std::string("Duplicate ") + kPatternLabel + " pattern");
 #endif
         }
-        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS == 6
+        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS == 7
+            ? "Shape, q, role, flip_k0, flip_k1, pattern, target or input rule outside the fixed WMMA sign-transfer cases" : C550_WMMA_WITNESS == 6
             ? "Shape, q, a_scale_exp, b_scale_exp, role, pattern, target or input rule outside the fixed WMMA reciprocal cases" : C550_WMMA_WITNESS == 5
             ? "Shape, q, scale_exp, role, pattern, target or input rule outside the fixed WMMA scale cases" : C550_WMMA_WITNESS == 4
             ? "Shape, q, role, pattern, target or input rule outside the fixed WMMA magnitude cases" : C550_WMMA_WITNESS == 3
@@ -595,7 +649,7 @@ void run(const std::string& input_directory, const std::string& output_directory
 #endif
 #if C550_WMMA_WITNESS >= 2
     records << ",\"witness_mode\":" << C550_WMMA_WITNESS << ",\"suite\":" << json_string(kOrderedSuite)
-            << ',' << json_string(std::string(kPatternLabel) + "_patterns") << ":[";
+            << ',' << json_string(std::string(kPatternFieldLabel) + "_patterns") << ":[";
     bool first_pattern = true;
     for (const auto& pattern : kProductPatterns) {
         if (!first_pattern) records << ',';
@@ -606,7 +660,13 @@ void run(const std::string& input_directory, const std::string& output_directory
         records << '}';
     }
     records << "],\"logical_shape\":[16,16,2],\"maximum_cases\":" << kPatternMaximum;
-#if C550_WMMA_WITNESS == 6
+#if C550_WMMA_WITNESS == 7
+    records << ",\"input_scale_denominator\":16,\"target_reference_denominator\":256,"
+               "\"q_values\":[6,7,12],\"roles\":[\"positive\",\"negative\",\"pair\"],"
+               "\"allowed_role_flips\":{\"positive\":[[0,0],[1,0]],\"negative\":[[0,0],[0,1]],\"pair\":[[0,0],[1,0],[0,1],[1,1]]},"
+               "\"sign_transfer_rule\":\"each active flip multiplies both A[k] and B[k] by -1; inactive flips are zero and all other input words are positive zero\","
+               "\"baseline_scope\":\"matching_reciprocal_patterns lists every complete declared A/B word match among all prior reciprocal patterns; actual historical equality must be checked separately\"";
+#elif C550_WMMA_WITNESS == 6
     records << ",\"base_input_denominator\":16,\"q_values\":[6,7,12],"
                "\"a_scale_exponents\":[-2,-1,0,1,2],\"b_scale_exponents\":[-2,-1,0,1,2],"
                "\"roles\":[\"positive\",\"negative\",\"pair\"],\"exponent_constraint\":\"b_scale_exp=-a_scale_exp\","

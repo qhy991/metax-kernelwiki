@@ -371,7 +371,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 `C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
-successor modes `2` through `6` select only the separate product, sign, magnitude, scale and reciprocal suites
+successor modes `2` through `7` select only the separate product, sign, magnitude, scale, reciprocal and sign-transfer suites
 below. All nonzero modes require paired control and prefix mode zero; the compile script
 and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
@@ -441,13 +441,13 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-product-probe
 ```
 
-The compile flag is the closed enum `0|1|2|3|4|5|6`: zero preserves the original
+The compile flag is the closed enum `0|1|2|3|4|5|6|7`: zero preserves the original
 non-pattern modes, one admits only `witness-control`, two admits only
 `product-control`, three admits only `sign-control`, four admits only
-`magnitude-control`, five admits only `scale-control`, and six admits only
-`reciprocal-control` below. Mode 2 is a deliberate successor contract; it is not an
+`magnitude-control`, five admits only `scale-control`, six admits only
+`reciprocal-control`, and seven admits only `sign-transfer-control` below. Mode 2 is a deliberate successor contract; it is not an
 extension to the patterns accepted by mode 1. Values outside that enum fail
-before compilation. Modes 1 through 6 require `C550_WMMA_CONTROL=1` and
+before compilation. Modes 1 through 7 require `C550_WMMA_CONTROL=1` and
 `C550_WMMA_PREFIX=0`.
 
 Products reuse the witness TSV column names, but `suite=product-control` and
@@ -532,7 +532,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 
 Mode 3 is an explicit successor contract and admits only `sign-control` with
 `input_rule=isolated-signed-products`. Successor mode 4 selects the separate
-magnitude suite below; values outside 0 through 6 are invalid. Existing modes
+magnitude suite below; values outside 0 through 7 are invalid. Existing modes
 0, 1 and 2 retain their own suite and pattern admission. The sign TSV uses the existing
 pattern columns; shared column names do not permit cross-suite rows. Sign
 plans contain one to eight distinct patterns. The ninth row is refused before
@@ -606,7 +606,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-magnitude-probe
 ```
 
-Mode 4 admits only `magnitude-control`; successor mode 5 selects the separate scale suite below, and mode 7 is invalid. Its exact TSV columns
+Mode 4 admits only `magnitude-control`; successor mode 5 selects the separate scale suite below, and mode 8 is invalid. Its exact TSV columns
 are `id, m, n, k, suite, pattern, q, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). q and role must match the closed pattern name, target `(0,0)`
 and `input_rule=isolated-adjacent-magnitudes`. The new header makes q and role
@@ -686,7 +686,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-scale-probe
 ```
 
-Mode 5 admits only `scale-control`; successor mode 6 selects the reciprocal suite below, and mode 7 is invalid. Modes 0 through 4 retain
+Mode 5 admits only `scale-control`; successor mode 6 selects the reciprocal suite below, and mode 8 is invalid. Modes 0 through 4 retain
 their existing suites. The new exact TSV columns are
 `id, m, n, k, suite, pattern, q, scale_exp, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated), with `input_rule=isolated-a-power-of-two-scale`. The default
@@ -796,7 +796,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-reciprocal-probe
 ```
 
-Mode 6 admits only `reciprocal-control`; mode 7 is invalid. Its distinct TSV
+Mode 6 admits only `reciprocal-control`; successor mode 7 selects the sign-transfer suite below, and mode 8 is invalid. Its distinct TSV
 header is
 `id, m, n, k, suite, pattern, q, a_scale_exp, b_scale_exp, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). It requires `input_rule=isolated-reciprocal-power-of-two-scale`.
@@ -861,3 +861,85 @@ input uniqueness and plural prior matches, both exponent bindings, wrong
 one-sided and same-sign scaling, product-preserving input changes, deep typed
 rational metadata, required empty/plural lists, guards, snapshots and complete
 mixed numerical failures. Synthetic CPU outputs are not C550 evidence.
+
+## Explicit product-preserving sign transfers
+
+`prepare --suite sign-transfer-control` fixes q in `(6,7,12)`, logical
+`M=N=16, K=2`, and target `C[0,0]`. The base ordered pairs are
+`A=[-q,1]/16` and `B=[-1,-(q+1)]/16`. A flag `flip_k0` or `flip_k1` multiplies
+**both** operands of that active term by −1, preserving each signed product.
+Standalone roles zero both inactive operands and forbid an inactive flip:
+
+| Role | Allowed `(flip_k0,flip_k1)` | Exact C00 reference |
+| --- | --- | --- |
+| `positive` | `(0,0)`, `(1,0)` | `q/256` |
+| `negative` | `(0,0)`, `(0,1)` | `-(q+1)/256` |
+| `pair` | `(0,0)`, `(1,0)`, `(0,1)`, `(1,1)` | `-1/256` |
+
+This gives eight conditions per q and 24 total. All remaining operand words
+are positive zero. The full physical output is checked: C00 must match the
+exact integer reference, and the other 255 values must be finite numerical zero.
+Changing only one factor's sign changes a product and is refused as a packed
+input error. An undeclared two-factor sign change is also refused, even though
+its mathematical product remains equal. Numerical equivalence does not replace
+the declared input-pattern identity.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-sign-transfer-input \
+  --suite sign-transfer-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=7 \
+  bash experiments/wmma/compile.sh /tmp/wmma-sign-transfer-probe
+```
+
+Mode 7 admits only `sign-transfer-control`; mode 8 is invalid. Its exact TSV
+columns are `id, m, n, k, suite, pattern, q, role, flip_k0, flip_k1, target_row, target_col, input_rule, order, warmups, samples, launches`
+(tab-separated). It requires `input_rule=isolated-product-preserving-sign-transfer`.
+Both flags must be integer 0 or 1 and match the role's closed pattern; Boolean,
+floating-point, out-of-range and inactive-flag substitutions are refused.
+
+The default order is q ascending, then the table's role and flag order. Pattern
+`q06-positive-f10` flips term K0, while `q06-negative-f01` flips K1: the first f
+bit is K0 and the second is K1. IDs use underscores, for example
+`sign_transfer_q06_pair_f11`. Both kernel orders, explicit case reordering and
+subsets remain supported. Duplicate patterns and a 25th row are refused before
+device calls; a subset does not establish complete sign-transfer coverage.
+
+The oracle/protocol experiment is `wmma-scalar-fp32-sign-transfer-control`.
+Protocol metadata declares `witness_mode=7`, all 24 `sign_transfer_patterns`,
+the role-specific flag pairs and their product-preserving rule. Each
+logical-case, variant and snapshot binds q, role, both integer flags, the
+role-masked `a_base_numerators` and `b_base_numerators`, `transfer_multipliers`,
+and the actual ordered `a_numerators` and `b_numerators`. Signed products,
+numerator magnitudes, occupied K slots and exact reference are explicit, with
+operand denominators 16 and product/reference denominator 256. Missing fields
+and deep type substitutions are refused.
+
+Independent complete-buffer comparison establishes 24 distinct declared A/B
+inputs. Nine conditions match the prior reciprocal suite: the `(0,0)` flag
+condition for each q and role, each matching `qNN-a0-b0-role`. The required
+`matching_reciprocal_patterns` list retains every full-input match and is empty
+for the other fifteen conditions. These relationships come from all 2,048
+prepared halfwords, including inactive zeros and unused chunks; actual historical
+results must again compare complete retained operands and outputs. No matching
+shape or unflipped-label shortcut establishes a device result.
+
+Both kernel bodies, the launch helper and all existing encoders are unchanged.
+The shared paired execution retains full padded K16 participation, separate C
+buffers, 64 guards per output side and three full A/B snapshots. One complete
+24-condition order checks 12,288 payload words, 6,144 guards, 49,152 prepared
+halfwords and 147,456 snapshot halfwords. It retains 480 timed batches and
+executes 5,280 launches including warmups. Timing remains descriptive, numerical
+failures remain failures, and `performance_accepted=false` is unchanged.
+
+The experiment varies factor signs while preserving each exact product and
+reference within q/role. Any change or invariance in device outputs is bounded
+to these inputs and this software/device path; it does not establish internal
+precision, instruction selection, rounding, accumulation order or a unique
+hardware/compiler cause. Standalone and paired results remain separate.
+
+`tests/test_wmma_sign_transfer.py` independently checks all 24 exact inputs and
+references with `Fraction` arithmetic and binary16 conversion, full-input
+uniqueness/history, one-sign errors, inactive-flip admission, negative-zero
+padding, typed metadata and required empty lists, guards, snapshots and complete
+mixed failures. Synthetic CPU outputs are not C550 measurement evidence.

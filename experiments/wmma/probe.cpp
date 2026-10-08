@@ -34,8 +34,8 @@
 #ifndef C550_WMMA_WITNESS
 #define C550_WMMA_WITNESS 0
 #endif
-#if C550_WMMA_WITNESS < 0 || C550_WMMA_WITNESS > 5
-#error "C550_WMMA_WITNESS must be 0, 1, 2, 3, 4 or 5"
+#if C550_WMMA_WITNESS < 0 || C550_WMMA_WITNESS > 6
+#error "C550_WMMA_WITNESS must be 0, 1, 2, 3, 4, 5 or 6"
 #endif
 #if C550_WMMA_WITNESS && (!C550_WMMA_CONTROL || C550_WMMA_PREFIX)
 #error "C550_WMMA_WITNESS requires C550_WMMA_CONTROL=1 and C550_WMMA_PREFIX=0"
@@ -45,7 +45,8 @@ namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
-constexpr const char* kExperiment = C550_WMMA_WITNESS == 5 ? "wmma-scalar-fp32-scale-control"
+constexpr const char* kExperiment = C550_WMMA_WITNESS == 6 ? "wmma-scalar-fp32-reciprocal-control"
+                                 : C550_WMMA_WITNESS == 5 ? "wmma-scalar-fp32-scale-control"
                                  : C550_WMMA_WITNESS == 4 ? "wmma-scalar-fp32-magnitude-control"
                                  : C550_WMMA_WITNESS == 3 ? "wmma-scalar-fp32-sign-control"
                                  : C550_WMMA_WITNESS == 2 ? "wmma-scalar-fp32-product-control"
@@ -54,8 +55,8 @@ constexpr const char* kExperiment = C550_WMMA_WITNESS == 5 ? "wmma-scalar-fp32-s
                                  : C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
 #if C550_WMMA_WITNESS
-constexpr const char* kPatternLabel = C550_WMMA_WITNESS == 5 ? "scale" : C550_WMMA_WITNESS == 4 ? "magnitude" : C550_WMMA_WITNESS == 3 ? "sign" : C550_WMMA_WITNESS == 2 ? "product" : "witness";
-constexpr unsigned kPatternMaximum = C550_WMMA_WITNESS == 5 ? 45 : C550_WMMA_WITNESS == 4 ? 42 : C550_WMMA_WITNESS == 3 ? 8 : C550_WMMA_WITNESS == 2 ? 6 : 3;
+constexpr const char* kPatternLabel = C550_WMMA_WITNESS == 6 ? "reciprocal" : C550_WMMA_WITNESS == 5 ? "scale" : C550_WMMA_WITNESS == 4 ? "magnitude" : C550_WMMA_WITNESS == 3 ? "sign" : C550_WMMA_WITNESS == 2 ? "product" : "witness";
+constexpr unsigned kPatternMaximum = C550_WMMA_WITNESS >= 5 ? 45 : C550_WMMA_WITNESS == 4 ? 42 : C550_WMMA_WITNESS == 3 ? 8 : C550_WMMA_WITNESS == 2 ? 6 : 3;
 #endif
 
 void check_mc(mcError_t status, const char* expression) {
@@ -101,6 +102,9 @@ struct Case {
 #if C550_WMMA_WITNESS == 5
     int scale_exp = 0;
 #endif
+#if C550_WMMA_WITNESS == 6
+    int a_scale_exp = 0, b_scale_exp = 0;
+#endif
     unsigned m = 0, n = 0, k = 0, warmups = 0, samples = 0, launches = 0;
     std::vector<uint16_t> a, b;
 };
@@ -110,6 +114,7 @@ struct ProductPattern {
     const char* name; int a[2], b[2]; const char* matching_product_pattern = nullptr;
     unsigned q = 0; const char* role = nullptr; const char* matching_sign_pattern = nullptr;
     int scale_exp = 0; const char* matching_magnitude_pattern = nullptr;
+    int b_scale_exp = 0; const char* matching_scale_first = nullptr; const char* matching_scale_second = nullptr;
 };
 #if C550_WMMA_WITNESS == 2
 constexpr ProductPattern kProductPatterns[] = {
@@ -138,7 +143,7 @@ constexpr ProductPattern kProductPatterns[] = {
     MAGNITUDE_ROW(13, "q13") MAGNITUDE_ROW(14, "q14")
 };
 #undef MAGNITUDE_ROW
-#else
+#elif C550_WMMA_WITNESS == 5
 #define SCALE_ROW(Q, NAME, E, TAG, POSITIVE_MATCH) \
     {NAME "-" TAG "-positive", {-(Q),0}, {-1,0}, nullptr, Q, "positive", nullptr, E, POSITIVE_MATCH}, \
     {NAME "-" TAG "-negative", {0,1}, {0,-((Q)+1)}, nullptr, Q, "negative", nullptr, E, E == 0 ? NAME "-negative" : nullptr}, \
@@ -155,9 +160,32 @@ constexpr ProductPattern kProductPatterns[] = {
     SCALE_ROW(12, "q12", 2, "ep2", nullptr)
 };
 #undef SCALE_ROW
+#else
+#define RECIPROCAL_ROW(Q, NAME, E, ATAG, BTAG, MATCH1, MATCH2) \
+    {NAME "-" ATAG "-" BTAG "-positive", {-(Q),0}, {-1,0}, nullptr, Q, "positive", nullptr, E, nullptr, -(E), MATCH1, MATCH2}, \
+    {NAME "-" ATAG "-" BTAG "-negative", {0,1}, {0,-((Q)+1)}, nullptr, Q, "negative", nullptr, E, nullptr, -(E), E == 0 ? NAME "-e0-negative" : nullptr}, \
+    {NAME "-" ATAG "-" BTAG "-pair", {-(Q),1}, {-1,-((Q)+1)}, nullptr, Q, "pair", nullptr, E, nullptr, -(E), E == 0 ? NAME "-e0-pair" : nullptr},
+constexpr ProductPattern kProductPatterns[] = {
+    RECIPROCAL_ROW(6, "q06", -2, "am2", "bp2", nullptr, nullptr)
+    RECIPROCAL_ROW(6, "q06", -1, "am1", "bp1", nullptr, nullptr)
+    RECIPROCAL_ROW(6, "q06", 0, "a0", "b0", "q06-e0-positive", "q12-em1-positive")
+    RECIPROCAL_ROW(6, "q06", 1, "ap1", "bm1", nullptr, nullptr)
+    RECIPROCAL_ROW(6, "q06", 2, "ap2", "bm2", nullptr, nullptr)
+    RECIPROCAL_ROW(7, "q07", -2, "am2", "bp2", nullptr, nullptr)
+    RECIPROCAL_ROW(7, "q07", -1, "am1", "bp1", nullptr, nullptr)
+    RECIPROCAL_ROW(7, "q07", 0, "a0", "b0", "q07-e0-positive", nullptr)
+    RECIPROCAL_ROW(7, "q07", 1, "ap1", "bm1", nullptr, nullptr)
+    RECIPROCAL_ROW(7, "q07", 2, "ap2", "bm2", nullptr, nullptr)
+    RECIPROCAL_ROW(12, "q12", -2, "am2", "bp2", nullptr, nullptr)
+    RECIPROCAL_ROW(12, "q12", -1, "am1", "bp1", nullptr, nullptr)
+    RECIPROCAL_ROW(12, "q12", 0, "a0", "b0", "q06-ep1-positive", "q12-e0-positive")
+    RECIPROCAL_ROW(12, "q12", 1, "ap1", "bm1", nullptr, nullptr)
+    RECIPROCAL_ROW(12, "q12", 2, "ap2", "bm2", nullptr, nullptr)
+};
+#undef RECIPROCAL_ROW
 #endif
-constexpr const char* kOrderedSuite = C550_WMMA_WITNESS == 5 ? "scale-control" : C550_WMMA_WITNESS == 4 ? "magnitude-control" : C550_WMMA_WITNESS == 3 ? "sign-control" : "product-control";
-constexpr const char* kOrderedRule = C550_WMMA_WITNESS == 5 ? "isolated-a-power-of-two-scale" : C550_WMMA_WITNESS == 4 ? "isolated-adjacent-magnitudes" : C550_WMMA_WITNESS == 3 ? "isolated-signed-products" : "isolated-ordered-products";
+constexpr const char* kOrderedSuite = C550_WMMA_WITNESS == 6 ? "reciprocal-control" : C550_WMMA_WITNESS == 5 ? "scale-control" : C550_WMMA_WITNESS == 4 ? "magnitude-control" : C550_WMMA_WITNESS == 3 ? "sign-control" : "product-control";
+constexpr const char* kOrderedRule = C550_WMMA_WITNESS == 6 ? "isolated-reciprocal-power-of-two-scale" : C550_WMMA_WITNESS == 5 ? "isolated-a-power-of-two-scale" : C550_WMMA_WITNESS == 4 ? "isolated-adjacent-magnitudes" : C550_WMMA_WITNESS == 3 ? "isolated-signed-products" : "isolated-ordered-products";
 
 const ProductPattern* product_pattern(const std::string& name) {
     for (const auto& pattern : kProductPatterns)
@@ -166,11 +194,13 @@ const ProductPattern* product_pattern(const std::string& name) {
 }
 
 void product_terms(std::ostream& records, const ProductPattern& pattern) {
-    const int scale_num = C550_WMMA_WITNESS == 5 ? 1 << (pattern.scale_exp > 0 ? pattern.scale_exp : 0) : 1;
+    const int scale_num = C550_WMMA_WITNESS >= 5 ? 1 << (pattern.scale_exp > 0 ? pattern.scale_exp : 0) : 1;
+    const int b_scale_num = C550_WMMA_WITNESS == 6 ? 1 << (pattern.b_scale_exp > 0 ? pattern.b_scale_exp : 0) : 1;
     const int a0 = pattern.a[0] * scale_num, a1 = pattern.a[1] * scale_num;
-    const int p0 = a0 * pattern.b[0], p1 = a1 * pattern.b[1];
+    const int b0 = pattern.b[0] * b_scale_num, b1 = pattern.b[1] * b_scale_num;
+    const int p0 = a0 * b0, p1 = a1 * b1;
     records << ",\"k_slots\":[0,1],\"a_numerators\":[" << a0 << ',' << a1
-            << "],\"b_numerators\":[" << pattern.b[0] << ',' << pattern.b[1]
+            << "],\"b_numerators\":[" << b0 << ',' << b1
             << "],\"product_numerators\":[" << p0 << ',' << p1 << "],\"nonzero_product_k_slots\":[";
     if (p0) records << '0';
     if (p0 && p1) records << ',';
@@ -186,7 +216,7 @@ void product_terms(std::ostream& records, const ProductPattern& pattern) {
     records << ",\"q\":" << pattern.q << ",\"role\":" << json_string(pattern.role)
             << ",\"matching_sign_pattern\":"
             << (pattern.matching_sign_pattern ? json_string(pattern.matching_sign_pattern) : "null");
-#else
+#elif C550_WMMA_WITNESS == 5
     const int scale_den = 1 << (pattern.scale_exp < 0 ? -pattern.scale_exp : 0);
     records << ",\"q\":" << pattern.q << ",\"scale_exp\":" << pattern.scale_exp << ",\"role\":" << json_string(pattern.role)
             << ",\"a_base_numerators\":[" << pattern.a[0] << ',' << pattern.a[1] << ']'
@@ -195,6 +225,21 @@ void product_terms(std::ostream& records, const ProductPattern& pattern) {
             << ",\"product_denominator\":" << 256 * scale_den << ",\"target_reference_denominator\":" << 256 * scale_den
             << ",\"matching_magnitude_pattern\":"
             << (pattern.matching_magnitude_pattern ? json_string(pattern.matching_magnitude_pattern) : "null");
+#else
+    const int a_den = 1 << (pattern.scale_exp < 0 ? -pattern.scale_exp : 0);
+    const int b_den = 1 << (pattern.b_scale_exp < 0 ? -pattern.b_scale_exp : 0);
+    records << ",\"q\":" << pattern.q << ",\"a_scale_exp\":" << pattern.scale_exp << ",\"b_scale_exp\":" << pattern.b_scale_exp
+            << ",\"role\":" << json_string(pattern.role)
+            << ",\"a_base_numerators\":[" << pattern.a[0] << ',' << pattern.a[1] << ']'
+            << ",\"b_base_numerators\":[" << pattern.b[0] << ',' << pattern.b[1] << ']'
+            << ",\"a_scale_numerator\":" << scale_num << ",\"a_scale_denominator\":" << a_den
+            << ",\"b_scale_numerator\":" << b_scale_num << ",\"b_scale_denominator\":" << b_den
+            << ",\"a_denominator\":" << 16 * a_den << ",\"b_denominator\":" << 16 * b_den
+            << ",\"product_denominator\":" << 256 * a_den * b_den << ",\"target_reference_denominator\":" << 256 * a_den * b_den
+            << ",\"matching_scale_patterns\":[";
+    if (pattern.matching_scale_first) records << json_string(pattern.matching_scale_first);
+    if (pattern.matching_scale_second) records << ',' << json_string(pattern.matching_scale_second);
+    records << ']';
 #endif
 #endif
 }
@@ -211,6 +256,9 @@ bool admitted_shape(const Case& c) {
 #endif
 #if C550_WMMA_WITNESS == 5
         && c.scale_exp == pattern->scale_exp
+#endif
+#if C550_WMMA_WITNESS == 6
+        && c.a_scale_exp == pattern->scale_exp && c.b_scale_exp == pattern->b_scale_exp
 #endif
         ;
 #elif C550_WMMA_WITNESS == 1
@@ -256,7 +304,7 @@ uint16_t sixteenth_bits(int numerator) {
            | ((exponent + 11) << 10) | ((magnitude - (1U << exponent)) << (10 - exponent)));
 }
 
-#if C550_WMMA_WITNESS == 5
+#if C550_WMMA_WITNESS >= 5
 uint16_t scaled_sixteenth_bits(int numerator, int scale_exp) {
     if (numerator < -15 || numerator > 15 || scale_exp < -2 || scale_exp > 2)
         throw std::runtime_error("Scaled FP16 input outside the fixed dyadic contract");
@@ -297,12 +345,17 @@ void validate_inputs(const Case& c) {
                     b_num = outer == c.target_col && k < 2 ? b_pair[k] : 0;
                 }
 #endif
-#if C550_WMMA_WITNESS == 5
+#if C550_WMMA_WITNESS == 6
+                const uint16_t a_bits = scaled_sixteenth_bits(a_num, c.a_scale_exp);
+                const uint16_t b_bits = scaled_sixteenth_bits(b_num, c.b_scale_exp);
+#elif C550_WMMA_WITNESS == 5
                 const uint16_t a_bits = scaled_sixteenth_bits(a_num, c.scale_exp);
+                const uint16_t b_bits = sixteenth_bits(b_num);
 #else
                 const uint16_t a_bits = sixteenth_bits(a_num);
+                const uint16_t b_bits = sixteenth_bits(b_num);
 #endif
-                if (c.a[index] != a_bits || c.b[index] != sixteenth_bits(b_num))
+                if (c.a[index] != a_bits || c.b[index] != b_bits)
                     throw std::runtime_error("Packed input words differ from the declared A-row/B-column contract");
             }
         }
@@ -312,7 +365,8 @@ void validate_inputs(const Case& c) {
 std::vector<Case> read_plan(const std::string& directory) {
     std::ifstream file(directory + "/cases.tsv");
     std::string line;
-    const char* header = C550_WMMA_WITNESS == 5 ? "id\tm\tn\tk\tsuite\tpattern\tq\tscale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
+    const char* header = C550_WMMA_WITNESS == 6 ? "id\tm\tn\tk\tsuite\tpattern\tq\ta_scale_exp\tb_scale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
+                        : C550_WMMA_WITNESS == 5 ? "id\tm\tn\tk\tsuite\tpattern\tq\tscale_exp\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_WITNESS == 4 ? "id\tm\tn\tk\tsuite\tpattern\tq\trole\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_WITNESS ? "id\tm\tn\tk\tsuite\tpattern\ttarget_row\ttarget_col\tinput_rule\torder\twarmups\tsamples\tlaunches"
                         : C550_WMMA_PREFIX ? "id\tm\tn\tk\tsuite\tfamily\torder\twarmups\tsamples\tlaunches"
@@ -330,7 +384,11 @@ std::vector<Case> read_plan(const std::string& directory) {
         Case c;
         std::string trailing;
 #if C550_WMMA_CONTROL
-#if C550_WMMA_WITNESS == 5
+#if C550_WMMA_WITNESS == 6
+        if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.q >> c.a_scale_exp >> c.b_scale_exp >> c.role >> c.target_row >> c.target_col
+                  >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
+            throw std::runtime_error("Invalid reciprocal-control case row");
+#elif C550_WMMA_WITNESS == 5
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.q >> c.scale_exp >> c.role >> c.target_row >> c.target_col
                   >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid scale-control case row");
@@ -364,7 +422,8 @@ std::vector<Case> read_plan(const std::string& directory) {
                 throw std::runtime_error(std::string("Duplicate ") + kPatternLabel + " pattern");
 #endif
         }
-        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS == 5
+        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS == 6
+            ? "Shape, q, a_scale_exp, b_scale_exp, role, pattern, target or input rule outside the fixed WMMA reciprocal cases" : C550_WMMA_WITNESS == 5
             ? "Shape, q, scale_exp, role, pattern, target or input rule outside the fixed WMMA scale cases" : C550_WMMA_WITNESS == 4
             ? "Shape, q, role, pattern, target or input rule outside the fixed WMMA magnitude cases" : C550_WMMA_WITNESS == 3
             ? "Shape, pattern, target or input rule outside the fixed WMMA sign cases" : C550_WMMA_WITNESS == 2
@@ -547,7 +606,15 @@ void run(const std::string& input_directory, const std::string& output_directory
         records << '}';
     }
     records << "],\"logical_shape\":[16,16,2],\"maximum_cases\":" << kPatternMaximum;
-#if C550_WMMA_WITNESS == 5
+#if C550_WMMA_WITNESS == 6
+    records << ",\"base_input_denominator\":16,\"q_values\":[6,7,12],"
+               "\"a_scale_exponents\":[-2,-1,0,1,2],\"b_scale_exponents\":[-2,-1,0,1,2],"
+               "\"roles\":[\"positive\",\"negative\",\"pair\"],\"exponent_constraint\":\"b_scale_exp=-a_scale_exp\","
+               "\"reciprocal_rule\":\"A and B are multiplied by reciprocal powers of two from their base numerators/16; all other input words are positive zero\","
+               "\"reference_rule\":\"target_reference_numerator/target_reference_denominator; exact products are unchanged across reciprocal exponents; all other outputs are zero\","
+               "\"standalone_inactive_slot_policy\":\"both A and B are positive zero at the inactive K slot\","
+               "\"baseline_scope\":\"matching_scale_patterns lists every complete declared A/B word match among all prior scale patterns, including aliases; actual historical equality must be checked separately\"";
+#elif C550_WMMA_WITNESS == 5
     records << ",\"base_input_denominator\":16,\"b_denominator\":16,"
                "\"scale_rule\":\"only A is multiplied by 2^scale_exp from its base numerator/16; B is unchanged; all other input words are positive zero\","
                "\"reference_rule\":\"target_reference_numerator/target_reference_denominator; all other outputs are zero\","

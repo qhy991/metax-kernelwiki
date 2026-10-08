@@ -371,7 +371,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 ```
 
 `C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
-successor modes `2`, `3`, `4` and `5` select only the separate product, sign, magnitude and scale suites
+successor modes `2` through `6` select only the separate product, sign, magnitude, scale and reciprocal suites
 below. All nonzero modes require paired control and prefix mode zero; the compile script
 and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
@@ -441,12 +441,13 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-product-probe
 ```
 
-The compile flag is the closed enum `0|1|2|3|4|5`: zero preserves the original
+The compile flag is the closed enum `0|1|2|3|4|5|6`: zero preserves the original
 non-pattern modes, one admits only `witness-control`, two admits only
 `product-control`, three admits only `sign-control`, four admits only
-`magnitude-control`, and five admits only `scale-control` below. Mode 2 is a deliberate successor contract; it is not an
+`magnitude-control`, five admits only `scale-control`, and six admits only
+`reciprocal-control` below. Mode 2 is a deliberate successor contract; it is not an
 extension to the patterns accepted by mode 1. Values outside that enum fail
-before compilation. Modes 1 through 5 require `C550_WMMA_CONTROL=1` and
+before compilation. Modes 1 through 6 require `C550_WMMA_CONTROL=1` and
 `C550_WMMA_PREFIX=0`.
 
 Products reuse the witness TSV column names, but `suite=product-control` and
@@ -531,7 +532,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
 
 Mode 3 is an explicit successor contract and admits only `sign-control` with
 `input_rule=isolated-signed-products`. Successor mode 4 selects the separate
-magnitude suite below; values outside 0 through 5 are invalid. Existing modes
+magnitude suite below; values outside 0 through 6 are invalid. Existing modes
 0, 1 and 2 retain their own suite and pattern admission. The sign TSV uses the existing
 pattern columns; shared column names do not permit cross-suite rows. Sign
 plans contain one to eight distinct patterns. The ninth row is refused before
@@ -605,7 +606,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-magnitude-probe
 ```
 
-Mode 4 admits only `magnitude-control`; successor mode 5 selects the separate scale suite below, and mode 6 is invalid. Its exact TSV columns
+Mode 4 admits only `magnitude-control`; successor mode 5 selects the separate scale suite below, and mode 7 is invalid. Its exact TSV columns
 are `id, m, n, k, suite, pattern, q, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). q and role must match the closed pattern name, target `(0,0)`
 and `input_rule=isolated-adjacent-magnitudes`. The new header makes q and role
@@ -685,7 +686,7 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-scale-probe
 ```
 
-Mode 5 admits only `scale-control`; mode 6 is invalid. Modes 0 through 4 retain
+Mode 5 admits only `scale-control`; successor mode 6 selects the reciprocal suite below, and mode 7 is invalid. Modes 0 through 4 retain
 their existing suites. The new exact TSV columns are
 `id, m, n, k, suite, pattern, q, scale_exp, role, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated), with `input_rule=isolated-a-power-of-two-scale`. The default
@@ -761,3 +762,102 @@ all 41 distinct input pairs, full-word historical matching, typed rational
 metadata and null bindings. It also checks wrong operand scaling, negative-e
 truncation, factorization changes, guards, snapshots and complete mixed numerical
 failures. These CPU tests use synthetic outputs, not new C550 measurements.
+
+## Explicit reciprocal input-scale suite
+
+`prepare --suite reciprocal-control` keeps the physical and logical tile
+`M=N=16, K=2` and target `C[0,0]`. It declares q in `(6,7,12)`, A exponent e in
+`(-2,-1,0,1,2)`, B exponent `-e`, and positive/negative/pair roles. A is scaled
+by `2^e` and B by `2^-e` from their base numerator pairs over 16:
+
+| Role | Base A numerators | Base B numerators | Exact C00 reference for every e |
+| --- | --- | --- | --- |
+| `positive` | `[-q, 0]` | `[-1, 0]` | `q/256` |
+| `negative` | `[0, 1]` | `[0, -(q+1)]` | `-(q+1)/256` |
+| `pair` | `[-q, 1]` | `[-1, -(q+1)]` | `-1/256` |
+
+Both operands at an inactive component slot are positive zero. All other
+operand words are positive zero. Multiplying the exact dyadic values cancels
+the reciprocal scale factors, so the two individual products and reference
+sum are invariant across e. This is an input/oracle contract, not an assumed
+property of the device outputs.
+
+Mode 6 reuses the bounded `scaled_halfword` and `scaled_sixteenth_bits` encoders
+for each operand, without altering either encoder or their admitted base domain.
+All admitted nonzero values remain normal and finite, including maximum
+`|B|=13/4`. The kernel bodies, launch helper and full padded K16 execution remain
+unchanged. No new device operation or timing path is introduced.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-reciprocal-input \
+  --suite reciprocal-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=6 \
+  bash experiments/wmma/compile.sh /tmp/wmma-reciprocal-probe
+```
+
+Mode 6 admits only `reciprocal-control`; mode 7 is invalid. Its distinct TSV
+header is
+`id, m, n, k, suite, pattern, q, a_scale_exp, b_scale_exp, role, target_row, target_col, input_rule, order, warmups, samples, launches`
+(tab-separated). It requires `input_rule=isolated-reciprocal-power-of-two-scale`.
+Both exponent fields are integers and must match the closed pattern with
+`b_scale_exp=-a_scale_exp`. One-sided or same-sign exponent substitutions fail
+admission. The mode-5 and mode-6 headers reject each other's inputs.
+
+The default order is q ascending, A exponent ascending, then positive/negative/
+pair. Patterns expose both exponents: `q06-am2-bp2-positive`,
+`q06-am1-bp1-positive`, `q06-a0-b0-positive`, `q06-ap1-bm1-positive` and
+`q06-ap2-bm2-positive` illustrate the five exponent settings. Case IDs prepend
+`reciprocal_` and replace hyphens with underscores. Both kernel orders and
+explicit subsets or case reordering remain available. There are 45 admitted
+conditions; a duplicate pattern or a 46th row is refused before device calls.
+
+The oracle/protocol experiment is `wmma-scalar-fp32-reciprocal-control`.
+Every pattern, logical-case, variant and snapshot binds q, role, both exponents,
+both base numerator vectors, and both exact scale ratios. For each operand,
+`*_scale_numerator=2^max(exponent,0)` and
+`*_scale_denominator=2^max(-exponent,0)`. Effective `a_numerators` and
+`b_numerators` multiply their respective base vectors by those scale numerators;
+`a_denominator` and `b_denominator` are 16 times their corresponding scale
+denominators. Product numerators multiply those effective integer numerators,
+and `product_denominator=a_denominator × b_denominator`. The target reference
+uses their integer sum over that product denominator. These unreduced rational
+fields state the same exact products at every reciprocal exponent. Signs,
+numerator magnitudes, active slots and the target/reference remain explicit.
+The new suite has no ambiguous single `scale_exp` field.
+
+Complete-buffer comparisons establish that the 45 reciprocal conditions have
+45 distinct prepared A/B pairs. Matching against all 45 prior one-sided-scale
+conditions finds nine matching reciprocal conditions and eleven prior-pattern
+links. The `matching_scale_patterns` field is a required list, including an
+empty list where no input matches. Two lists contain both prior aliases:
+
+- `q06-a0-b0-positive`: `q06-e0-positive`, `q12-em1-positive`;
+- `q12-a0-b0-positive`: `q06-ep1-positive`, `q12-e0-positive`.
+
+The remaining seven matches are the same-q/role e=0 patterns. These counts and
+lists follow complete A/B word equality, including zero slots and padding;
+no exponent-based filter is used. Actual historical projections must again
+compare the complete retained input arrays and preserve every match rather
+than choose one prior identity. A historical match is a declared input
+relationship, not a new numerical outcome or binary-identity claim.
+
+The exact finite-output policy, signed-zero equivalence, separate guarded C
+buffers and three full A/B snapshots are retained. One full 45-condition order
+checks 23,040 payload words, 11,520 guards, 92,160 prepared halfwords and 276,480
+snapshot halfwords, with 900 timed batches and 9,900 launches including warmups.
+All numerical failures remain failures without a tolerance change; timings are
+descriptive and `performance_accepted=false`.
+
+Reciprocal scaling changes the factorization of the same exact products. Any
+observed change or invariance is bounded to these inputs and the measured
+software/device path. It does not identify internal precision, rounding,
+instruction selection, accumulation order or a unique hardware/compiler cause.
+Standalone and paired outputs remain separate observations.
+
+`tests/test_wmma_reciprocal.py` independently checks all 45 operands and fixed
+references with `Fraction` arithmetic and binary16 conversion. It tests complete
+input uniqueness and plural prior matches, both exponent bindings, wrong
+one-sided and same-sign scaling, product-preserving input changes, deep typed
+rational metadata, required empty/plural lists, guards, snapshots and complete
+mixed numerical failures. Synthetic CPU outputs are not C550 evidence.

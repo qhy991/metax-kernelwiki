@@ -47,6 +47,14 @@ export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 [属性参考][dynamic-attributes]区分静态shared用量与动态shared的最大允许值：静态值不包含此次launch的动态请求，最大允许值也不是实际请求量。[设置上限的接口][dynamic-limit]要求动态上限与静态shared之和不超过设备声明的每block上限。这里不引入CUDA的默认48KiB，也不把分配容量或occupancy API的预测当成实测驻留。
 
+## 64-lane collective 的下一轮接口契约
+
+2026-10-08 核对了官方 C++ 指南的活动版本选择器为3.5.3.x。[Shuffle 章节][cpp-shuffle]声明 `__shfl_sync(unsigned long mask, T value, int srcLane, int width=warpSize)`：width是合法的二次幂子组宽度；直接索引超过组宽时按`srcLane % width`选择组内源。mask中的线程必须活跃并匹配调用，源线程也必须参与。[整数归约][cpp-reduce]声明`__reduce_add_sync(unsigned long mask, int value)`及unsigned int版本。
+
+本库下一轮可先检验完整64/128线程block的直接shuffle与整数求和，所有参与线程都保存输出；逻辑数据尾部用0填充，线程不提前退出。[同步章节][cpp-sync]单独声明`__syncwarp`的内存顺序保证，不能用寄存器shuffle代替shared-memory同步。
+
+这是系列文档契约，尚未成为C550 intrinsic实测。down-shuffle越界说明、xor正文措辞及vote mask类型存在不协调之处，首轮不据其推导边界规则；实际mask宽度、安装头文件与编译支持仍须分别确认。
+
 ## mcTriton 源码事实
 
 [Python driver][triton-driver] 在 target 中保留 backend 名 `maca`，并使用 64-lane 组；launcher 将 `num_warps` 乘以 64 作为 block 的线程数。[C driver][triton-driver-c]另有兼容 capability 映射：设备 `major=10/15/16` 分别映射为 `80/86/89`。这些是该源码版本的接口实现，不能当作 NVIDIA compute capability 或 C550 原生 ISA 型号。
@@ -99,3 +107,7 @@ MACA 提供事件计时 API，官方例子将开始/结束事件放在 kernel �
 [extern-shared]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程接口.html#sxjmjcedu7c41
 [dynamic-attributes]: https://developer.metax-tech.com/api/client/document/preview/990/split_files/mxmaca_运行时api模块.html#mcerror-t-mcfuncgetattribute-int-value-mcfunction-attribute-attrib-mcfunction-t-hfunc
 [dynamic-limit]: https://developer.metax-tech.com/api/client/document/preview/990/split_files/mxmaca_运行时api模块.html#mcerror-t-mcfuncsetattribute-const-void-func-mcfuncattribute-attr-int-value
+
+[cpp-shuffle]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-shuffle
+[cpp-reduce]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-reduce
+[cpp-sync]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#pddnkif8w7ir1

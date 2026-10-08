@@ -15,14 +15,14 @@
 | 理解 512/1024 线程与首次启动 | [launch bounds 与运行时重编译](wiki/launch-bounds.md) |
 | 查编译器与 Triton 原始依据 | [工具链](docs/toolchain.md) · [资料索引](docs/sources.md) |
 | 判断一个性能数字说明了什么 | [实验方法](docs/methodology.md) |
-| 重现实验 | [原生探针](experiments/native/README.md) |
+| 重现实验 | [原生探针](experiments/native/README.md) · [读取排列](experiments/memory_order/README.md) · [转置控制](experiments/transpose/README.md) |
 | 查参考库和来源边界 | [来源沿革](docs/provenance.md) |
 
 ## 当前实测范围
 
 首轮已在 C550 / MACA 3.5.3.18 完成 **49 个 case**，逐位检查 **22,042,413 个有效输出**及边界 guard。公开记录保存全部 **490 个计时批次**；四进程平衡顺序确认和含 1020 个 GPU kernel 的独立 trace 也已完成。缓存策略、时钟、导出时间单位及并发覆盖限制见[研究进展](docs/research-log.md)。
 
-后继实验已验证 1024-thread 边界，以及显式 launch bound 对默认 copy 重编译路径的影响，见[机制页](wiki/launch-bounds.md)。
+后继实验覆盖 [1024-thread 与重编译路径](wiki/launch-bounds.md)、[固定地址集合的读取排列](wiki/memory-order.md)，以及[同结果转置的分块、padding 和固定容量行距对照](wiki/transpose.md)。各轮保留独立源码、完整输出检查、进程级复验和 profiler 记录；具体条件与未覆盖范围以对应机制页为准。
 
 ## 检索
 

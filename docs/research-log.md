@@ -69,9 +69,21 @@
 
 [同一机制页的后继章节](../wiki/transpose.md#后继同一个函数固定16640字节容量) · [独立结果与1400个计时批次](../data/results/20261008-shared-pitch.json)。所有十三个设备进程及profiled应用已退出；仍不向open-cake-ir提升。源代码固定提交在独立checkout通过66项CPU测试，`820fc44`公有仓库CI已通过。
 
+## 2026-10-08：动态shared请求与行距的分解对照
+
+源码`dd20525`新增共同dynamic kernel的三个配置：pitch64请求16,384/16,640B，以及pitch65请求16,640B。57-case扫描后，十进程按预先固定的A_first/B/C/A_last或A_first/C/B/A_last复验200case，三份独立trace再验3case；260case全部正确，保存2600个原始批次。
+
+固定pitch的A/B比较在五个shape中的四个稳定支持较小请求更快，第五个4095×4097的比值跨1，不能写统一容量规则。固定请求的B/C比较则五shape各十进程都支持pitch65更快。相同配置的前后端点、每个端点分别对B的比值全部保留，没有筛去漂移大的进程。
+
+[机制页的后继对照](../wiki/transpose.md#再后继同一函数的动态shared请求量) · [完整结果](../data/results/20261008-dynamic-shared.json)。三个trace同名、各110kernel，均报告13regs/static0，请求对应的dynamic报告值为16384/16640；重编译标志均false。仍未识别物理分配粒度或实际occupancy。
+
+全部14个设备worker及3个profiled应用已释放。固定源码在独立checkout通过70项CPU检查，并完成本机MXCC编译和host非法组合负对照；没有向open-cake-ir提升。`a61ea94`固定容量行距结果已按用户明确授权发布，其公有仓库CI已通过；后续同等验证的增量继续发布。
+
+同时核对官方C++指南3.5.3.x的shuffle、integer reduction与同步契约，留存主文和活动版本选择器；这些接口尚未在本库完成C550实测，边界歧义与下一轮范围见[工具链页](toolchain.md#64-lane-collective-的下一轮接口契约)。
+
 ## 下一轮问题
 
-- 用同一个dynamic-shared kernel和同一pitch，只改变launch预留字节数；请求容量、静态资源、动态上限和trace报告分别记录，不把上限当请求或实际驻留。
-- 不将当前五shape的优势扩展为所有dtype、shape或SDK的无条件padding规则。
-- 继续推进64-lane reduction等机制；保持尾部与完整输出验证。
-- 没有可识别的计数器/反例之前，不反推bank数、宽度、冲突阶数或实际occupancy。
+- 在完整64/128线程block上验证直接索引shuffle与整数求和，检查所有物理参与lane；逻辑尾部补零，覆盖31/32/33、63/64/65及第二wave边界。
+- 先核对安装头文件的64-bit mask和运行时wave64；不把32-bit截断mask或提前退出作为GPU负对照。
+- 对dynamic shared的形状差异寻找有定义的资源/计数器证据，不能从请求量除法推断驻留或bank几何。
+- 仍不将某个shape、dtype、SDK的收益扩展为无条件优化规则。

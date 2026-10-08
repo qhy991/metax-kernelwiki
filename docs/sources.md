@@ -1,6 +1,6 @@
 # 第一方资料索引
 
-查阅日期：2026-10-07。此页是资料入口，不是 C550 测量结果。实机证据应保存设备型号、原生架构、软件版本、命令和原始输出，并链接到对应实验记录。
+查阅日期：2026-10-07；C++ intrinsic契约补查于2026-10-08。此页是资料入口，不是 C550 测量结果。实机证据应保存设备型号、原生架构、软件版本、命令和原始输出，并链接到对应实验记录。
 
 ## 适用范围
 
@@ -16,6 +16,7 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 | --- | --- | --- |
 | [曦云系列运行时 API 编程指南 3.5.3.x][runtime] | 执行模型称 64 个线程为 wave；设备查询、内存、事件、kernel 启动和 MXCC 工程构建的入口 | 系列指南；数值仍需 C550 查询。指南示例用 `mcDeviceProp_t.waveSize`，本地 SDK 头文件可能含兼容别名 |
 | [运行时指南 3.5.3.x：Binary Cache][runtime-cache]、[环境变量][runtime-env] | §4.3 的未标注 launch bounds、1024-thread vector-add 示例说明 block 大于 512 会触发重编译和 binary cache；§4.4 定义缓存路径及禁用开关 | 这是该示例的文档行为，不是所有 kernel 的性能保证。需在本机区分设备上限、函数属性、首次 launch 与后续执行 |
+| [MXMACA C++语言扩展3.5.3.x][cpp-extensions] | shuffle的mask/width/源lane、整数collective与同步语义 | 活动版本选择器已核实；系列契约仍需安装头文件、编译与C550正确性验证，正文歧义见[工具链页](toolchain.md#64-lane-collective-的下一轮接口契约) |
 | [MXMACA 发布说明：概述][release-overview] | 各软件组件的发布版本和产品系列适用范围 | `latest` 会移动，不等于实机安装版本 |
 | [MXMACA 发布说明：新增特性及变更][release-changes] | 判断功能在什么版本出现；例如 3.7.0 节记录 `-offload-arch=native`，也记录工具与编译器变更 | 不据此认定宿主 3.5.3 已具备新版本功能；也不据旧记录否定本地回移补丁 |
 | [MXMACA 发布说明：已知问题和使用限制][release-limits] | 发现需针对性排查的版本及场景限制，包括 C550 OAM 的部分通信算子问题 | 限制有具体场景，不能外推到所有 C550 kernel；不直接照抄环境变量作为优化配置 |
@@ -80,3 +81,5 @@ MetaX 的 **MXC500 系列**是软件文档的适配集合，包含 C500、C500X�
 [wsm-scope]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程模型.html#3s9wt8x546le1
 [block-sync]: https://developer.metax-tech.com/api/client/document/preview/编程参考/运行时API编程指南/曦云C500系列/3.5.3.x/split_files/编程接口.html#f9dqemikxd6i1
 [c500-banks]: https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md
+
+[cpp-extensions]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html

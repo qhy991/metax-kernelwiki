@@ -30,13 +30,17 @@
         "mcfatbin",
         "triton",
         "compiler",
-        "MACA"
+        "MACA",
+        "shuffle",
+        "reduction",
+        "collective"
       ],
       "confidence": "documented",
       "evidence_scope": "upstream-source",
       "path": "docs/toolchain.md",
       "sources": [
-        "https://github.com/MetaX-MACA/mcTriton"
+        "https://github.com/MetaX-MACA/mcTriton",
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html"
       ],
       "limitations": "上游版本与宿主安装版本分别记录；源码选项不等于 C550 性能结论。"
     },
@@ -151,7 +155,7 @@
     },
     {
       "id": "c550-transpose-tiling-padding",
-      "title": "C550转置：分块、padding与固定shared容量的行距对照",
+      "title": "C550转置：分块、行距与动态shared请求量的受控比较",
       "tags": [
         "transpose",
         "shared memory",
@@ -166,7 +170,9 @@
         "runtime pitch",
         "capacity",
         "行距",
-        "容量"
+        "容量",
+        "dynamic shared",
+        "reservation"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "local-measurement",
@@ -174,10 +180,11 @@
       "sources": [
         "https://github.com/qhy991/metax-kernelwiki/tree/bf1db0f01da160789efb115b68502ba4b05611cc",
         "https://gitee.com/metax-maca/mxmaca-performance-tuning-guide/blob/65a3f7680ec6236a8be4a24a40f830eb63218ee7/guide/ch3.Kernel编程入门.reduction.md",
-        "https://github.com/qhy991/metax-kernelwiki/tree/56db27ef74bf2207679d987c83d9d110fb13061b"
+        "https://github.com/qhy991/metax-kernelwiki/tree/56db27ef74bf2207679d987c83d9d110fb13061b",
+        "https://github.com/qhy991/metax-kernelwiki/tree/dd205257874915278a0dda4651a48352caf75642"
       ],
-      "result": "data/results/20261008-shared-pitch.json",
-      "limitations": "专用kernel与同函数固定容量对照各自保留；行距效应不证明bank几何或occupancy，新旧差异不能全部归因容量。"
+      "result": "data/results/20261008-dynamic-shared.json",
+      "limitations": "同一dynamic kernel拆开请求量与行距，容量响应依赖shape；请求/工具报告不等于物理分配或occupancy，static/dynamic绝对差异仍有代码生成混杂。"
     }
   ]
 }

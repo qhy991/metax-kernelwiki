@@ -23,12 +23,23 @@ WITNESS_PATTERNS = {
     "isolated-origin": (13, 2, "isolated-fixed-pairs"),
     "isolated-c00": (0, 0, "isolated-fixed-pairs"),
 }
+PRODUCT_EXPERIMENT = "wmma-scalar-fp32-product-control"
+PRODUCT_SUITE = "product-control"
+PRODUCT_PATTERNS = {
+    "positive-k0": ((-12,0),(-1,0)),
+    "positive-k1": ((0,-12),(0,-1)),
+    "negative-k0": ((1,0),(-13,0)),
+    "negative-k1": ((0,1),(0,-13)),
+    "pair-forward": ((-12,1),(-1,-13)),
+    "pair-reversed": ((1,-12),(-13,-1)),
+}
 SHAPES = ((16,16,0),(1,1,1),(16,16,16),(15,16,16),(16,15,16),(15,15,15),
           (7,9,17),(15,16,31),(16,15,32),(16,16,33),(9,7,63),(16,16,64))
 COLUMNS = ("id","m","n","k","warmups","samples","launches")
 CONTROL_COLUMNS = ("id","m","n","k","order","warmups","samples","launches")
 PREFIX_COLUMNS = ("id","m","n","k","suite","family","order","warmups","samples","launches")
 WITNESS_COLUMNS = ("id","m","n","k","suite","pattern","target_row","target_col","input_rule","order","warmups","samples","launches")
+PRODUCT_COLUMNS = WITNESS_COLUMNS
 ORDERS = {"wmma-first": ("wmma","scalar"), "scalar-first": ("scalar","wmma")}
 SNAPSHOT_PHASES = ("before","between","after")
 TILE = 16
@@ -114,25 +125,35 @@ def witness_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def read_witness_plan(path: Path) -> list[dict]:
+    return _read_pattern_plan(path,WITNESS_SUITE)
+
+
+def read_product_plan(path: Path) -> list[dict]:
+    return _read_pattern_plan(path,PRODUCT_SUITE)
+
+
+def _read_pattern_plan(path: Path, suite: str) -> list[dict]:
+    label,maximum,validate={WITNESS_SUITE:("witness",3,validate_witness_case),
+                            PRODUCT_SUITE:("product",6,validate_product_case)}[suite]
     with path.open(newline="") as handle:
         reader=csv.DictReader(handle,delimiter="\t")
         if tuple(reader.fieldnames or ())!=WITNESS_COLUMNS:
-            raise ValueError("Unsupported witness cases.tsv header")
+            raise ValueError(f"Unsupported {label} cases.tsv header")
         rows=list(reader)
-    if not 1<=len(rows)<=3:
-        raise ValueError("A witness plan must contain 1 to 3 cases")
+    if not 1<=len(rows)<=maximum:
+        raise ValueError(f"A {label} plan must contain 1 to {maximum} cases")
     cases,ids,patterns=[],set(),set()
     text_fields={"id","suite","pattern","input_rule","order"}
     for row in rows:
         if None in row or any(row[field] is None for field in WITNESS_COLUMNS):
-            raise ValueError("Malformed witness case row")
+            raise ValueError(f"Malformed {label} case row")
         case={field:row[field] if field in text_fields else int(row[field]) for field in WITNESS_COLUMNS}
         if (not case["id"] or case["id"] in ids
                 or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for ch in case["id"])):
             raise ValueError("Invalid or duplicate case id")
-        validate_witness_case(case)
+        validate(case)
         if case["pattern"] in patterns:
-            raise ValueError("Duplicate witness pattern")
+            raise ValueError(f"Duplicate {label} pattern")
         if case["order"] not in ORDERS:
             raise ValueError("Unknown WMMA/scalar variant order")
         if (case["warmups"],case["samples"],case["launches"])!=(10,10,10):
@@ -182,6 +203,72 @@ def witness_reference_output(case: dict) -> list[float]:
 def witness_pattern_contracts() -> list[dict]:
     return [dict(pattern=pattern,target_row=row,target_col=col,input_rule=rule)
             for pattern,(row,col,rule) in WITNESS_PATTERNS.items()]
+
+
+def validate_product_case(case: dict) -> None:
+    if (case.get("suite")!=PRODUCT_SUITE or case.get("pattern") not in PRODUCT_PATTERNS
+            or any(type(case.get(field)) is not int for field in ("m","n","k","target_row","target_col"))
+            or (case["m"],case["n"],case["k"],case["target_row"],case["target_col"])!=(16,16,2,0,0)
+            or case.get("input_rule")!="isolated-ordered-products"):
+        raise ValueError("Shape, pattern, target or input rule outside the fixed WMMA product cases")
+
+
+def product_cases(order: str = "wmma-first") -> list[dict]:
+    if order not in ORDERS:
+        raise ValueError("Unknown WMMA/scalar variant order")
+    return [dict(id="product_"+pattern.replace("-","_"),m=16,n=16,k=2,suite=PRODUCT_SUITE,
+                 pattern=pattern,target_row=0,target_col=0,input_rule="isolated-ordered-products",order=order,
+                 warmups=10,samples=10,launches=10) for pattern in PRODUCT_PATTERNS]
+
+
+def product_packed_inputs(case: dict) -> tuple[list[int],list[int]]:
+    validate_product_case(case)
+    a,b=[0]*1024,[0]*1024
+    left,right=PRODUCT_PATTERNS[case["pattern"]]
+    for k in range(2):
+        a[k],b[k]=halfword(left[k]),halfword(right[k])
+    return a,b
+
+
+def validate_product_inputs(case: dict, a: list[int], b: list[int]) -> dict:
+    expected=product_packed_inputs(case)
+    for label,actual,want in (("A",a,expected[0]),("B",b,expected[1])):
+        if len(actual)!=1024 or actual!=want:
+            raise ValueError(f"{case['id']}: packed product {label} input words differ from the contract")
+    return dict(input_halfwords_checked=2048,a_padding_halfwords_checked=992,b_padding_halfwords_checked=992,
+                a_pattern_masked_halfwords_checked=30,b_pattern_masked_halfwords_checked=30)
+
+
+def product_reference_output(case: dict) -> list[float]:
+    """Two logical integer products; no packed-array or kernel indexing is reused."""
+    validate_product_case(case)
+    left,right=PRODUCT_PATTERNS[case["pattern"]]
+    result=[0.0]*256
+    result[0]=sum(a*b for a,b in zip(left,right))/256
+    return result
+
+
+def product_pattern_contracts() -> list[dict]:
+    result=[]
+    for pattern,(left,right) in PRODUCT_PATTERNS.items():
+        products=[a*b for a,b in zip(left,right)]
+        result.append(dict(pattern=pattern,target_row=0,target_col=0,input_rule="isolated-ordered-products",
+                           k_slots=[0,1],a_numerators=list(left),b_numerators=list(right),product_numerators=products,
+                           nonzero_product_k_slots=[k for k,value in enumerate(products) if value!=0],
+                           target_reference_numerator=sum(products)))
+    return result
+
+
+def product_case_fields(case: dict) -> dict:
+    validate_product_case(case)
+    contract=next(row for row in product_pattern_contracts() if row["pattern"]==case["pattern"])
+    return dict(suite=PRODUCT_SUITE,**contract)
+
+
+def product_protocol_metadata() -> dict:
+    return dict(witness_mode=2,suite=PRODUCT_SUITE,product_patterns=product_pattern_contracts(),
+                logical_shape=[16,16,2],maximum_cases=6,input_scale_denominator=16,target_reference_denominator=256,
+                product_rule="only A row0 and B column0 contain the declared ordered pairs at k0,k1; all other input words are positive zero")
 
 
 def halfword(numerator: int) -> int:
@@ -262,7 +349,7 @@ def oracle_metadata() -> dict:
 
 
 def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -> dict:
-    if suite is not None and (suite!=WITNESS_SUITE or prefix):
+    if suite is not None and (suite not in (WITNESS_SUITE,PRODUCT_SUITE) or prefix):
         raise ValueError("Unknown or incompatible paired control suite")
     result = {**oracle_metadata(), "experiment": CONTROL_EXPERIMENT,
             "variants": ["wmma","scalar"], "input_snapshots": list(SNAPSHOT_PHASES),
@@ -286,6 +373,12 @@ def control_oracle_metadata(*, prefix: bool = False, suite: str | None = None) -
                       target_reference_numerator=-1,target_reference_denominator=256,
                       reference="dense: independent logical integer dot/256; isolated: only declared target cell is -1/256",
                       target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping")
+    if suite==PRODUCT_SUITE:
+        result.pop("a_rule");result.pop("b_rule")
+        result.update(experiment=PRODUCT_EXPERIMENT,**product_protocol_metadata(),
+                      reference="only C00 is the sum of the two declared integer products/256; all other outputs are zero",
+                      target_coordinate_scope="logical matrix coordinates, not a hardware lane or fragment mapping",
+                      k_slot_scope="declared logical K positions; no native accumulation-order assertion")
     return result
 
 
@@ -304,37 +397,45 @@ def prefix_cases(order: str = "wmma-first") -> list[dict]:
 
 
 def prepare(destination: Path, suite: str = "default", order: str | None = None) -> dict:
-    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE) or (suite=="default" and order is not None):
+    if suite not in ("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE) or (suite=="default" and order is not None):
         raise ValueError("Order is only supported by paired control suites")
     prefix = suite==PREFIX_SUITE
     witness = suite==WITNESS_SUITE
     control = suite!="default"
-    cases = witness_cases(order or "wmma-first") if witness else prefix_cases(order or "wmma-first") if prefix else control_cases(order or "wmma-first") if control else default_cases()
+    if suite==PRODUCT_SUITE:
+        cases=product_cases(order or "wmma-first")
+    else:
+        cases = witness_cases(order or "wmma-first") if witness else prefix_cases(order or "wmma-first") if prefix else control_cases(order or "wmma-first") if control else default_cases()
     destination.mkdir(parents=True,exist_ok=False)
     for case in cases:
-        a,b = witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
+        a,b = product_packed_inputs(case) if suite==PRODUCT_SUITE else witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
         for suffix,words in (("a",a),("b",b)):
             (destination/f"{case['id']}.{suffix}.f16").write_bytes(struct.pack("<1024H",*words))
     with (destination/"cases.tsv").open("w",newline="") as handle:
-        columns=WITNESS_COLUMNS if witness else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
+        columns=WITNESS_COLUMNS if suite in (WITNESS_SUITE,PRODUCT_SUITE) else PREFIX_COLUMNS if prefix else CONTROL_COLUMNS if control else COLUMNS
         writer=csv.DictWriter(handle,fieldnames=columns,delimiter="\t",lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
-    metadata=control_oracle_metadata(prefix=prefix,suite=WITNESS_SUITE if witness else None) if control else oracle_metadata()
+    metadata=control_oracle_metadata(prefix=prefix,suite=suite if suite in (WITNESS_SUITE,PRODUCT_SUITE) else None) if control else oracle_metadata()
     (destination/"oracle.json").write_text(json.dumps(metadata,indent=2)+"\n")
     result = dict(prepared=str(destination),cases=len(cases),input_bytes_per_case=4096)
     if prefix:
         result.update(suite=PREFIX_SUITE,families=list(PREFIX_FAMILIES))
     if witness:
         result.update(suite=WITNESS_SUITE,patterns=list(WITNESS_PATTERNS))
+    if suite==PRODUCT_SUITE:
+        result.update(suite=PRODUCT_SUITE,patterns=list(PRODUCT_PATTERNS))
     return result
 
 
 def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None = None) -> None:
     if suite is not None:
-        if suite!=WITNESS_SUITE or prefix:
+        if suite not in (WITNESS_SUITE,PRODUCT_SUITE) or prefix:
             raise ValueError("Unknown or incompatible paired control suite")
-        validate_witness_case(case)
+        if suite==PRODUCT_SUITE:
+            validate_product_case(case)
+        else:
+            validate_witness_case(case)
     else:
         validate_case(case,prefix=prefix)
 
@@ -342,6 +443,14 @@ def validate_control_case(case: dict, *, prefix: bool = False, suite: str | None
 def witness_case_fields(case: dict) -> dict:
     validate_witness_case(case)
     return {field:case[field] for field in ("suite","pattern","target_row","target_col","input_rule")}
+
+
+def _pattern_case_fields(case: dict, suite: str) -> dict:
+    if suite==PRODUCT_SUITE:
+        return product_case_fields(case)
+    if suite==WITNESS_SUITE:
+        return witness_case_fields(case)
+    raise ValueError("Unknown pattern control suite")
 
 
 def witness_protocol_metadata() -> dict:
@@ -360,7 +469,8 @@ def case_metadata(case: dict, variant: str | None = None, *, prefix: bool = Fals
     if prefix and variant is None:
         raise ValueError("Prefix metadata requires an explicit paired variant")
     if suite is not None and variant is None:
-        raise ValueError("Witness metadata requires an explicit paired variant")
+        raise ValueError("Product metadata requires an explicit paired variant" if suite==PRODUCT_SUITE
+                         else "Witness metadata requires an explicit paired variant")
     result = dict(m=case["m"],n=case["n"],k=case["k"],tile_m=16,tile_n=16,tile_k=16,
                 k_chunks=(case["k"]+15)//16,packed_chunks=4,a_layout="row_major",b_layout="col_major",c_layout="row_major",
                 leading_dimension=16,operand_dtype="float16",accumulator_dtype="float32",output_elements=256,
@@ -379,6 +489,8 @@ def case_metadata(case: dict, variant: str | None = None, *, prefix: bool = Fals
         result.update(suite=PREFIX_SUITE,family=case["family"])
     if suite==WITNESS_SUITE:
         result.update(witness_case_fields(case))
+    if suite==PRODUCT_SUITE:
+        result.update(product_case_fields(case))
     return result
 
 
@@ -470,7 +582,7 @@ def snapshot_metadata(case: dict, phase: str, *, prefix: bool = False, suite: st
         result.update(suite=PREFIX_SUITE,family=case["family"])
     if suite is not None:
         validate_control_case(case,prefix=prefix,suite=suite)
-        result.update(witness_case_fields(case))
+        result.update(_pattern_case_fields(case,suite))
     return result
 
 
@@ -489,6 +601,10 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
         for field,value in witness_protocol_metadata().items():
             if json.dumps(protocol.get(field),sort_keys=True,allow_nan=False)!=json.dumps(value,sort_keys=True):
                 raise ValueError(f"Witness protocol metadata mismatch: {field}")
+    if suite==PRODUCT_SUITE:
+        for field,value in product_protocol_metadata().items():
+            if json.dumps(protocol.get(field),sort_keys=True,allow_nan=False)!=json.dumps(value,sort_keys=True):
+                raise ValueError(f"Product protocol metadata mismatch: {field}")
     for field,value in dict(control_mode=1,variants_per_case=2,input_snapshots=list(SNAPSHOT_PHASES),
                             input_rewrite_between_variants=False,purpose="correctness_diagnostic",performance_accepted=False).items():
         if type(protocol.get(field)) is not type(value) or protocol[field]!=value:
@@ -504,7 +620,9 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
         row=records[position]
         position+=1
         for field,value in dict(type=kind,id=case["id"],**expected).items():
-            if type(row.get(field)) is not type(value) or row[field]!=value:
+            if (type(row.get(field)) is not type(value) or row[field]!=value
+                    or (suite==PRODUCT_SUITE and isinstance(value,list)
+                        and json.dumps(row[field],allow_nan=False)!=json.dumps(value))):
                 raise ValueError(f"Control record order or metadata mismatch: {case['id']}: {kind}: {field}")
         return row
     result={}
@@ -514,8 +632,8 @@ def validate_control_records(records: list[dict], cases: list[dict], *, prefix: 
             raise ValueError("Unknown WMMA/scalar variant order")
         fields=("m","n","k","suite","family","order") if prefix else ("m","n","k","order")
         logical={field:case[field] for field in fields}
-        if suite==WITNESS_SUITE:
-            logical.update(witness_case_fields(case))
+        if suite in (WITNESS_SUITE,PRODUCT_SUITE):
+            logical.update(_pattern_case_fields(case,suite))
         take("logical_case",case,logical)
         snapshots={"before":take("input_snapshot",case,snapshot_metadata(case,"before",prefix=prefix,suite=suite))}
         variants={}
@@ -544,7 +662,7 @@ def analyze_control_output(case: dict, words: list[int], *, prefix: bool = False
     if len(words)!=384:
         raise ValueError("Incorrect control output extent")
     validate_control_case(case,prefix=prefix,suite=suite)
-    expected=witness_reference_output(case) if suite==WITNESS_SUITE else reference_output(case,prefix=prefix)
+    expected=product_reference_output(case) if suite==PRODUCT_SUITE else witness_reference_output(case) if suite==WITNESS_SUITE else reference_output(case,prefix=prefix)
     values=struct.unpack("<256f",struct.pack("<256I",*words[64:-64]))
     mismatches=[]
     for index,(observed,want) in enumerate(zip(values,expected)):
@@ -567,12 +685,14 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
     if json.dumps(json.loads((input_directory/"oracle.json").read_text()),sort_keys=True,allow_nan=False) != json.dumps(metadata,sort_keys=True):
         raise ValueError("Unsupported control oracle metadata")
     witness=suite==WITNESS_SUITE
-    cases=read_witness_plan(input_directory/"cases.tsv") if witness else read_plan(input_directory/"cases.tsv",control=True,prefix=prefix)
+    cases=read_product_plan(input_directory/"cases.tsv") if suite==PRODUCT_SUITE else read_witness_plan(input_directory/"cases.tsv") if witness else read_plan(input_directory/"cases.tsv",control=True,prefix=prefix)
     prepared={}
     for case in cases:
         a=read_words(input_directory/f"{case['id']}.a.f16",1024,2)
         b=read_words(input_directory/f"{case['id']}.b.f16",1024,2)
-        if witness:
+        if suite==PRODUCT_SUITE:
+            validate_product_inputs(case,a,b)
+        elif witness:
             validate_witness_inputs(case,a,b)
         else:
             validate_inputs(case,a,b,prefix=prefix)
@@ -582,7 +702,7 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
     summaries=[]
     for case in cases:
         retained=indexed[case["id"]]
-        fixed=witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
+        fixed=product_packed_inputs(case) if suite==PRODUCT_SUITE else witness_packed_inputs(case) if witness else packed_inputs(case,prefix=prefix)
         snapshots={}
         for phase,snapshot in retained["snapshots"].items():
             operands={}
@@ -596,8 +716,8 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
                                        fixed_packing_mismatch_indices=contract_differences,
                                        file=snapshot[operand+"_file"])
             snapshots[phase]=dict(equal_to_prepared=all(row["equal_to_prepared"] for row in operands.values()),operands=operands)
-            if witness:
-                snapshots[phase].update(witness_case_fields(case),phase=phase,order=case["order"])
+            if suite in (WITNESS_SUITE,PRODUCT_SUITE):
+                snapshots[phase].update(_pattern_case_fields(case,suite),phase=phase,order=case["order"])
         variants={}
         for variant,data in retained["variants"].items():
             declaration=data["declaration"]
@@ -615,8 +735,8 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
                      input_snapshots=snapshots,inputs_unchanged=inputs_equal,variants=variants,passed=passed)
         if prefix:
             summary.update(suite=PREFIX_SUITE,family=case["family"])
-        if witness:
-            summary.update(witness_case_fields(case))
+        if suite in (WITNESS_SUITE,PRODUCT_SUITE):
+            summary.update(_pattern_case_fields(case,suite))
         summaries.append(summary)
     passed=all(row["passed"] for row in summaries)
     result = dict(status="pass" if passed else "diagnostic_failed",experiment=metadata["experiment"],
@@ -631,11 +751,15 @@ def check_control(input_directory: Path, output_directory: Path, *, prefix: bool
         result.update(suite=PREFIX_SUITE,families=list(PREFIX_FAMILIES),maximum_cases=34)
     if witness:
         result.update(suite=WITNESS_SUITE,patterns=witness_pattern_contracts(),maximum_cases=3)
+    if suite==PRODUCT_SUITE:
+        result.update(suite=PRODUCT_SUITE,patterns=product_pattern_contracts(),maximum_cases=6)
     return result
 
 
 def check(input_directory: Path, output_directory: Path) -> dict:
     oracle=json.loads((input_directory/"oracle.json").read_text())
+    if oracle==control_oracle_metadata(suite=PRODUCT_SUITE):
+        return check_control(input_directory,output_directory,suite=PRODUCT_SUITE)
     if oracle==control_oracle_metadata(suite=WITNESS_SUITE):
         return check_control(input_directory,output_directory,suite=WITNESS_SUITE)
     if oracle==control_oracle_metadata(prefix=True):
@@ -674,7 +798,7 @@ def main() -> int:
     commands=parser.add_subparsers(dest="command",required=True)
     preparation=commands.add_parser("prepare")
     preparation.add_argument("directory",type=Path)
-    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE),default="default")
+    preparation.add_argument("--suite",choices=("default","scalar-control",PREFIX_SUITE,WITNESS_SUITE,PRODUCT_SUITE),default="default")
     preparation.add_argument("--order",choices=tuple(ORDERS))
     checker=commands.add_parser("check")
     checker.add_argument("input_directory",type=Path)

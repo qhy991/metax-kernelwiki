@@ -34,8 +34,8 @@
 #ifndef C550_WMMA_WITNESS
 #define C550_WMMA_WITNESS 0
 #endif
-#if C550_WMMA_WITNESS != 0 && C550_WMMA_WITNESS != 1
-#error "C550_WMMA_WITNESS must be 0 or 1"
+#if C550_WMMA_WITNESS != 0 && C550_WMMA_WITNESS != 1 && C550_WMMA_WITNESS != 2
+#error "C550_WMMA_WITNESS must be 0, 1 or 2"
 #endif
 #if C550_WMMA_WITNESS && (!C550_WMMA_CONTROL || C550_WMMA_PREFIX)
 #error "C550_WMMA_WITNESS requires C550_WMMA_CONTROL=1 and C550_WMMA_PREFIX=0"
@@ -45,7 +45,8 @@ namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
-constexpr const char* kExperiment = C550_WMMA_WITNESS ? "wmma-scalar-fp32-witness-control"
+constexpr const char* kExperiment = C550_WMMA_WITNESS == 2 ? "wmma-scalar-fp32-product-control"
+                                 : C550_WMMA_WITNESS == 1 ? "wmma-scalar-fp32-witness-control"
                                  : C550_WMMA_PREFIX ? "wmma-scalar-fp32-prefix-control"
                                  : C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
@@ -90,8 +91,38 @@ struct Case {
     std::vector<uint16_t> a, b;
 };
 
+#if C550_WMMA_WITNESS == 2
+struct ProductPattern { const char* name; int a[2], b[2]; };
+constexpr ProductPattern kProductPatterns[] = {
+    {"positive-k0", {-12,0}, {-1,0}}, {"positive-k1", {0,-12}, {0,-1}},
+    {"negative-k0", {1,0}, {-13,0}}, {"negative-k1", {0,1}, {0,-13}},
+    {"pair-forward", {-12,1}, {-1,-13}}, {"pair-reversed", {1,-12}, {-13,-1}}
+};
+
+const ProductPattern* product_pattern(const std::string& name) {
+    for (const auto& pattern : kProductPatterns)
+        if (name == pattern.name) return &pattern;
+    return nullptr;
+}
+
+void product_terms(std::ostream& records, const ProductPattern& pattern) {
+    const int p0 = pattern.a[0] * pattern.b[0], p1 = pattern.a[1] * pattern.b[1];
+    records << ",\"k_slots\":[0,1],\"a_numerators\":[" << pattern.a[0] << ',' << pattern.a[1]
+            << "],\"b_numerators\":[" << pattern.b[0] << ',' << pattern.b[1]
+            << "],\"product_numerators\":[" << p0 << ',' << p1 << "],\"nonzero_product_k_slots\":[";
+    if (p0) records << '0';
+    if (p0 && p1) records << ',';
+    if (p1) records << '1';
+    records << "],\"target_reference_numerator\":" << p0 + p1;
+}
+#endif
+
 bool admitted_shape(const Case& c) {
-#if C550_WMMA_WITNESS
+#if C550_WMMA_WITNESS == 2
+    return c.suite == "product-control" && c.m == 16 && c.n == 16 && c.k == 2
+        && c.target_row == 0 && c.target_col == 0 && c.input_rule == "isolated-ordered-products"
+        && product_pattern(c.pattern) != nullptr;
+#elif C550_WMMA_WITNESS == 1
     if (c.suite != "witness-control" || c.m != 16 || c.n != 16 || c.k != 2) return false;
     if (c.pattern == "dense-origin")
         return c.target_row == 13 && c.target_col == 2 && c.input_rule == "dense-formulas";
@@ -118,6 +149,9 @@ void witness_fields(std::ostream& records, const Case& c) {
     records << ",\"suite\":" << json_string(c.suite) << ",\"pattern\":" << json_string(c.pattern)
             << ",\"target_row\":" << c.target_row << ",\"target_col\":" << c.target_col
             << ",\"input_rule\":" << json_string(c.input_rule);
+#if C550_WMMA_WITNESS == 2
+    product_terms(records, *product_pattern(c.pattern));
+#endif
 }
 #endif
 
@@ -148,7 +182,11 @@ void validate_inputs(const Case& c) {
                 const unsigned index = chunk * 256 + outer * 16 + inner;
                 int a_num = outer < c.m && k < c.k ? static_cast<int>((67 * outer + 13 * k) % 31) - 15 : 0;
                 int b_num = outer < c.n && k < c.k ? static_cast<int>((17 * k + 5 * outer + 3) % 29) - 14 : 0;
-#if C550_WMMA_WITNESS
+#if C550_WMMA_WITNESS == 2
+                const auto& pattern = *product_pattern(c.pattern);  // Admission already resolved the closed pattern.
+                a_num = outer == 0 && k < 2 ? pattern.a[k] : 0;
+                b_num = outer == 0 && k < 2 ? pattern.b[k] : 0;
+#elif C550_WMMA_WITNESS == 1
                 if (c.pattern != "dense-origin") {
                     const int a_pair[] = {-12, 1}, b_pair[] = {-1, -13};
                     a_num = outer == c.target_row && k < 2 ? a_pair[k] : 0;
@@ -174,7 +212,8 @@ std::vector<Case> read_plan(const std::string& directory) {
     std::vector<Case> cases;
     while (std::getline(file, line)) {
 #if C550_WMMA_WITNESS
-        if (cases.size() >= 3) throw std::runtime_error("Maximum 3 witness cases");
+        if (cases.size() >= (C550_WMMA_WITNESS == 2 ? 6U : 3U))
+            throw std::runtime_error(C550_WMMA_WITNESS == 2 ? "Maximum 6 product cases" : "Maximum 3 witness cases");
 #endif
         std::istringstream row(line);
         Case c;
@@ -183,7 +222,7 @@ std::vector<Case> read_plan(const std::string& directory) {
 #if C550_WMMA_WITNESS
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.pattern >> c.target_row >> c.target_col
                   >> c.input_rule >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
-            throw std::runtime_error("Invalid witness-control case row");
+            throw std::runtime_error(C550_WMMA_WITNESS == 2 ? "Invalid product-control case row" : "Invalid witness-control case row");
 #elif C550_WMMA_PREFIX
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.family >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid prefix-control case row");
@@ -202,10 +241,12 @@ std::vector<Case> read_plan(const std::string& directory) {
         for (const auto& old : cases) {
             if (old.id == c.id) throw std::runtime_error("Duplicate case id");
 #if C550_WMMA_WITNESS
-            if (old.pattern == c.pattern) throw std::runtime_error("Duplicate witness pattern");
+            if (old.pattern == c.pattern)
+                throw std::runtime_error(C550_WMMA_WITNESS == 2 ? "Duplicate product pattern" : "Duplicate witness pattern");
 #endif
         }
-        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS
+        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_WITNESS == 2
+            ? "Shape, pattern, target or input rule outside the fixed WMMA product cases" : C550_WMMA_WITNESS == 1
             ? "Shape, pattern, target or input rule outside the fixed WMMA witness cases" : C550_WMMA_PREFIX
             ? "Shape, suite or family outside the fixed WMMA prefix cases"
             : "Shape outside the fixed WMMA boundary cases");
@@ -359,7 +400,7 @@ void run(const std::string& input_directory, const std::string& output_directory
     records << ",\"prefix_mode\":1,\"suite\":\"prefix-control\",\"prefix_families\":[\"singleton\",\"dense\"],"
                "\"prefix_k_min\":0,\"prefix_k_max\":16,\"maximum_cases\":34";
 #endif
-#if C550_WMMA_WITNESS
+#if C550_WMMA_WITNESS == 1
     records << ",\"witness_mode\":1,\"suite\":\"witness-control\",\"witness_patterns\":["
                "{\"pattern\":\"dense-origin\",\"target_row\":13,\"target_col\":2,\"input_rule\":\"dense-formulas\"},"
                "{\"pattern\":\"isolated-origin\",\"target_row\":13,\"target_col\":2,\"input_rule\":\"isolated-fixed-pairs\"},"
@@ -370,6 +411,21 @@ void run(const std::string& input_directory, const std::string& output_directory
                "\"isolated_a_numerators\":[-12,1],\"isolated_b_numerators\":[-1,-13],\"input_scale_denominator\":16,"
                "\"isolated_rule\":\"only declared A target_row and B target_col retain the ordered pairs at k0,k1; all other input words are positive zero\","
                "\"target_reference_numerator\":-1,\"target_reference_denominator\":256";
+#endif
+#if C550_WMMA_WITNESS == 2
+    records << ",\"witness_mode\":2,\"suite\":\"product-control\",\"product_patterns\":[";
+    bool first_pattern = true;
+    for (const auto& pattern : kProductPatterns) {
+        if (!first_pattern) records << ',';
+        first_pattern = false;
+        records << "{\"pattern\":" << json_string(pattern.name)
+                << ",\"target_row\":0,\"target_col\":0,\"input_rule\":\"isolated-ordered-products\"";
+        product_terms(records, pattern);
+        records << '}';
+    }
+    records << "],\"logical_shape\":[16,16,2],\"maximum_cases\":6,\"input_scale_denominator\":16,"
+               "\"target_reference_denominator\":256,"
+               "\"product_rule\":\"only A row0 and B column0 contain the declared ordered pairs at k0,k1; all other input words are positive zero\"";
 #endif
     records << "}\n";
     records.flush();

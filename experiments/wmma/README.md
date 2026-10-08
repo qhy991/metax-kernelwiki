@@ -370,9 +370,10 @@ MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
   bash experiments/wmma/compile.sh /tmp/wmma-witness-probe
 ```
 
-`C550_WMMA_WITNESS` defaults to zero and accepts only `0` or `1`. Enabling it
-requires paired control and disables prefix mode; the compile script and source
-reject incompatible flags. Its exact TSV columns are
+`C550_WMMA_WITNESS` defaults to zero. Mode `1` selects this witness suite;
+the successor mode `2` selects only the separate product suite below. Both
+nonzero modes require paired control and prefix mode zero; the compile script
+and source reject incompatible flags. The witness suite's exact TSV columns are
 `id, m, n, k, suite, pattern, target_row, target_col, input_rule, order, warmups, samples, launches`
 (tab-separated). The suite must be `witness-control`. The input-rule identifiers
 are `dense-formulas` and `isolated-fixed-pairs`; each pattern fixes its rule and
@@ -408,3 +409,81 @@ input words, wrong placement, nonzero unrelated values, reversed terms,
 positive-zero input padding, every output and guard, metadata binding, both
 orders and complete failed diagnostics. These CPU tests use synthetic outputs;
 they establish no C550 witness result.
+
+## Explicit individual-product and K-slot suite
+
+`prepare --suite product-control` declares six isolated input patterns, all at
+logical `M=N=16, K=2` with target `C[0,0]`. Only A row 0 and B column 0 can be
+nonzero. Their two numerator slots are listed below; every value is divided by
+16 before FP16 packing. All other input words are positive zero.
+
+| Pattern | A numerators at K0, K1 | B numerators at K0, K1 | C00 integer numerator |
+| --- | --- | --- | --- |
+| `positive-k0` | `[-12, 0]` | `[-1, 0]` | `12` |
+| `positive-k1` | `[0, -12]` | `[0, -1]` | `12` |
+| `negative-k0` | `[1, 0]` | `[-13, 0]` | `-13` |
+| `negative-k1` | `[0, 1]` | `[0, -13]` | `-13` |
+| `pair-forward` | `[-12, 1]` | `[-1, -13]` | `-1` |
+| `pair-reversed` | `[1, -12]` | `[-13, -1]` | `-1` |
+
+The independent CPU oracle sums the two logical integer products and divides
+by 256. It checks the target and all 255 other outputs, which must be finite
+numerical zero. Either sign of output zero is accepted; input padding is still
+validated bitwise as positive zero. The forward pair has the same packed words
+as the earlier `isolated-c00` witness, but remains a separately declared case
+in this suite. Both cases remain independently checkable under their own labels.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-product-input \
+  --suite product-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=0 C550_WMMA_WITNESS=2 \
+  bash experiments/wmma/compile.sh /tmp/wmma-product-probe
+```
+
+The compile flag is now the closed enum `0|1|2`: zero preserves the original
+non-pattern modes, one admits only `witness-control`, and two admits only
+`product-control`. Mode 2 is a deliberate successor contract; it is not an
+extension to the patterns accepted by mode 1. Values outside that enum fail
+before compilation. Modes 1 and 2 require `C550_WMMA_CONTROL=1` and
+`C550_WMMA_PREFIX=0`.
+
+Products reuse the witness TSV column names, but `suite=product-control` and
+`input_rule=isolated-ordered-products` are required. The pattern fixes the
+ordered vectors, shape and target. A product binary rejects witness rows and
+a witness binary rejects product rows, despite the shared header. A plan admits
+one to six distinct product patterns; the seventh row is refused before its
+inputs are read. The default plan lists the table order. Either kernel order
+is supported; any reverse case order or profiling subset must be saved in the
+TSV. A subset does not establish six-pattern coverage.
+
+The oracle and raw protocol use experiment
+`wmma-scalar-fp32-product-control`. The protocol records `witness_mode=2`, the
+complete `product_patterns` table and its six-case bound. Each logical-case,
+variant and snapshot record binds the suite, pattern, target and input rule,
+plus `k_slots`, `a_numerators`, `b_numerators`, `product_numerators`,
+`nonzero_product_k_slots` and `target_reference_numerator`. Vector metadata
+is type-sensitive: Boolean or floating-point values cannot replace declared
+integers. Both the packed words and this metadata must match the pattern.
+
+The physical tile, kernel bodies, launch bodies, shared A/B allocations, separate
+C allocations, guards and three input snapshots retain the paired protocol.
+Each source kernel consumes one padded K16 chunk, including its fourteen zero
+K slots. One full six-pattern order checks 3,072 payload words, 1,536 guards,
+12,288 prepared halfwords and 36,864 snapshot halfwords; it retains 120 timed
+batches and executes 1,320 launches including warmups. Per-variant timing
+remains ten warmups plus ten batches of ten launches. Numerical failures remain
+complete diagnostics with `performance_accepted=false` and no tolerance change.
+
+These conditions separate each selected product, its logical K placement and
+the combined dot product. Swapping the K slots changes declared input placement;
+it does not reveal or prescribe the native accumulation order. The observations
+do not by themselves identify an instruction sequence, rounding mechanism,
+physical lane mapping or hardware-versus-compiler cause. Unchanged source
+kernel bodies do not establish identical binaries or a future device outcome.
+
+`tests/test_wmma_products.py` checks all six exact input/output contracts, mode
+and suite isolation, misplaced or additional support, unannounced slot swaps,
+positive-zero padding, missing and type-invalid nested metadata, complete mixed
+numerical failures, snapshots and guards. Its synthetic CPU data provides no
+C550 product-suite result.

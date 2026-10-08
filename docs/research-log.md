@@ -247,8 +247,21 @@ The frozen source passed 221 CPU tests, including 12 new module-checker tests. A
 
 The native image can therefore reproduce the residual when explicitly supplied. This does not determine the older fatbin's selected entry, rule out loader/cache transformations or explain native arithmetic. The public English page retains that distinction and the original failures.
 
+## 2026-10-09: A generated bitcode-only carrier is refused at module loading
+
+Source `3a08040` adds explicit native/retained-bitcode image kinds to the shared module collector and a v2 protocol. It retains one q7 oracle and one collection/launch path, requires independent carrier/payload references, and records `MACA_MODULE_LOADING`. Earlier v1 evidence still replays at `b463205`. The installed bundler first generated a 15,324-byte carrier with two descriptors: an empty host entry and the exact original 11,216-byte wrapped bitcode. Its 12-byte `__FILE_END__` trailer has no NUL. CPU preparation verifies the actual layout and whole payload; no device source or LLVM IR is recompiled. The preparation/run IDs use the UTC date.
+
+The native-v2 control completes with the previous single WMMA C00 residual (-2^-31) and exact scalar output. Both complete guarded matrices match the corresponding earlier native-module collection after complete prepared-input matching. The first bitcode-carrier attempt then fails at `mcModuleLoadData`, returning `mcErrorNoKernelImageForDevice`; the runtime diagnostic names a missing `xcore1002` binary. The collector stops before function lookup, its device allocations/uploads, snapshots or kernel launch. The requested scalar-first and trace stages remain untouched. No format fallback, retagging or retry occurs.
+
+[Full route observation](../data/results/20261008-wmma-bitcode-route.json) · [Bounded interpretation](../wiki/wmma-exactness.md#successor-bitcode-only-carrier-rejected-before-execution) · [v2 reproduction guide](../experiments/wmma_module/README.md). The failed attempt contains only its supplied image, host-prepared A/B files and one device record. A post-release audit matches the entire supplied carrier with the prepared reference and its payload with the original bitcode. This proves the input boundary, not successful module admission. Bitcode numerical evaluation is **not reached**; it is not a failed or passed numerical comparison. The prior native numerical result remains the catalog's primary result.
+
+Independent analysis decodes 8,960 native-control words and 2,048 failed-attempt host halfwords. Native input snapshots, finite payloads and guards pass. Both workers, lock-PID observations and observed process groups pass release checks; no profile ran. The generic allocator release-boundary template is not used as proof that the failed collector synchronized or retained GPU outputs. The successful collector reports `MACA_MODULE_LOADING` unset; the failed attempt retains only its requested environment, also unset.
+
+Frozen source passed 229 CPU tests. Both actual input forms passed the public CPU inspection gate, and 12 pre-device host-binary refusals passed. The empty cache listings do not establish the absence of internal runtime work. The loader diagnostic does not qualify its suggested compiler flag, reject all bitcode forms or explain which entry/format/JIT rule rejected this carrier. Nothing was promoted to open-cake-ir, and no performance is accepted.
+
 ## Next questions
 
 - Establish the earlier fatbin's payload selection or obtain evidence of the final runtime instructions for this C550/SDK pair. The explicit native-module result establishes its own route and does not settle either question.
+- Establish the serialized form produced by the installed MCRTC API using CPU-only evidence before declaring another bitcode input experiment. Preserve the generated-carrier refusal and distinguish producer format, target-entry selection and numerical behavior.
 - Qualify any independent SDK/compiler environment and its allocation/release lifecycle before a numerical comparison. Existing container package or requested-mount metadata alone is insufficient; preserve installed SDKs and production containers.
 - Preserve the original failures, exact oracle and non-performance diagnostic status. Neither a float fragment type nor the scalar source label identifies the native arithmetic mechanism.

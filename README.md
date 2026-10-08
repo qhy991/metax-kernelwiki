@@ -22,7 +22,7 @@ The published device experiments use one **C550 with MACA 3.5.3.18**. Each page 
 | Transpose | Tiling, shared-memory row pitch, and dynamic shared-memory requests have controlled comparisons. The request-size response depends on shape. | [Tiling and shared memory](wiki/transpose.md) |
 | Wave collectives | Full typed masks select 64- or 32-element reduction groups in the tested SDK. Physical wave width remains 64. | [Shuffle, reduction, and mask types](wiki/wave-collectives.md) |
 | Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
-| WMMA exactness | The q7 residual also recurs through an explicitly supplied native ELF, with exact scalar output and matching input snapshots. Performance remains unaccepted. | [Current findings](wiki/wmma-exactness.md#current-findings) · [Native-module control](wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) |
+| WMMA exactness | The q7 residual recurs through an explicit native ELF. The tested bitcode-only carrier is rejected before kernel execution and has no numerical result. | [Current findings](wiki/wmma-exactness.md#current-findings) · [Module-route boundary](wiki/wmma-exactness.md#successor-bitcode-only-carrier-rejected-before-execution) |
 | Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
 
 These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.
@@ -55,7 +55,7 @@ Each probe guide defines preparation, compilation, device execution, and indepen
 | Shuffle and integer reduction | [Wave collectives](experiments/wave_collectives/README.md) |
 | FP16 inputs, FP32 outputs, and scalar controls | [WMMA diagnostics](experiments/wmma/README.md) |
 | One fixed q7 numerical example, one launch per implementation | [Standalone q7 reproducer](experiments/wmma_q7/README.md) |
-| The same q7 input through an explicitly supplied native ELF | [Host-only module driver](experiments/wmma_module/README.md) |
+| Explicit native/bitcode input kinds with separate load and numerical checks | [Host-only module driver](experiments/wmma_module/README.md) |
 
 Read the [methodology](docs/methodology.md) before running a probe. Prepare and compile before acquiring a GPU; use the node's existing allocator. Retain device outputs, end the device worker, verify release, then perform host analysis. GPU work follows the [gpu-infra lease lifecycle](https://github.com/qhy991/gpu-infra/blob/main/skills/gpu-infra/SKILL.md#gpu-lease-lifecycle).
 

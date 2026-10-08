@@ -16,6 +16,7 @@
 | Do signs and product magnitudes matter? | At product magnitudes 12/256 and 13/256, same-sign pairs are exact; two mixed-sign cases have negative residuals. In the fixed-result integer q1–14 grid, pairs at q1–6 are exact and q7–14 fail at C00. | [Product signs](#successor-fixed-magnitude-sign-configurations) · [Magnitude grid](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
 | What happens under exact powers of two? | At q6/q7/q12, A-only scaling preserves the normalized failing residual. Reciprocal A/B scaling holds products fixed and preserves complete outputs across the five tested exponent pairs. | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal scaling](#successor-reciprocal-exponents-with-fixed-products) |
 | Does moving signs between factors change the result? | At q6/q7/q12, transferring either or both term signs between A and B preserves complete outputs within each q/role. q6 pairs are exact; q7/q12 retain -2^-31. | [Factor-sign transfer](#successor-transferring-factor-signs-at-fixed-products) |
+| Does a bitcode-only carrier reach the numerical test? | The tested two-entry carrier is rejected at module loading. No bitcode-route output or numerical result exists. | [Load refusal](#successor-bitcode-only-carrier-rejected-before-execution) |
 
 The cause remains unresolved. [Retained-binary inspection](../docs/compiled-artifacts.md) now identifies packaged bitcode and a native ELF, but not runtime payload selection or native arithmetic. These observations do not identify instruction precision, rounding or a unique compiler/hardware defect. A float output type alone does not establish stepwise IEEE FP32 arithmetic. Validate each workload against its own numerical contract; these bounded diagnostics do not qualify arbitrary-input or framework GEMM.
 <!-- kernelwiki:summary:end -->
@@ -33,6 +34,7 @@ The cause remains unresolved. [Retained-binary inspection](../docs/compiled-arti
 | Does factor-sign placement change it? | [Sign transfer at fixed products](#successor-transferring-factor-signs-at-fixed-products) |
 | What does the executed host file package? | [Compiled-artifact inspection](../docs/compiled-artifacts.md) |
 | Does explicitly supplying only its native ELF reproduce the result? | [Native-module route](#successor-explicit-native-elf-module-loading) |
+| What happens with only the retained bitcode in a generated carrier? | [Bitcode-carrier load refusal](#successor-bitcode-only-carrier-rejected-before-execution) |
 | How can I reproduce one concrete input? | [Standalone q7 package and results](#standalone-q7-reproducer-one-launch-per-variant) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
@@ -467,7 +469,7 @@ A subsequent [CPU-only inspection of this retained executable](../docs/compiled-
 
 ## Successor: explicit native ELF module loading
 
-Frozen source `b463205` adds a [host-only module driver](../experiments/wmma_module/README.md). GNU C++ 11.4 builds it against the installed MACA runtime; its host ELF contains no `.mc_fatbin`. The only supplied device image is the 18,232-byte native ELF extracted from the earlier `9b7bef6` q7 executable. This round performs no device-source compilation. The collector retains the exact buffer passed to `mcModuleLoadData`, resolves both original mangled symbols, and launches them through `mcModuleLaunchKernel` with four argument addresses and a null `extra`.
+Frozen source `b463205` adds a [host-only module driver](https://github.com/qhy991/metax-kernelwiki/blob/b463205eff646cd0c88fe26fd51838be1f8f1726/experiments/wmma_module/README.md). GNU C++ 11.4 builds it against the installed MACA runtime; its host ELF contains no `.mc_fatbin`. The only supplied device image is the 18,232-byte native ELF extracted from the earlier `9b7bef6` q7 executable. This round performs no device-source compilation. The collector retains the exact buffer passed to `mcModuleLoadData`, resolves both original mangled symbols, and launches them through `mcModuleLaunchKernel` with four argument addresses and a null `extra`.
 
 This tests an explicit route. The 3.5.3 API documentation warns against `kernelParams`, while the installed sample and published mcTriton caller use it. All three collections below successfully load the retained native image, look up both functions, launch both kernels and unload the module. That supports this image, these two kernels, their four arguments and tested launch configurations; it does not qualify every module or argument interface.
 
@@ -488,6 +490,26 @@ The trace contains exactly two GPU kernel events, in WMMA/scalar order, with blo
 Frozen source passed 221 CPU tests. Seven host-only argument/image refusals passed before admission. All three workers and the profiled application exited with verified release; CPU analysis followed release. The shared q7 file-check refactor preserves all three earlier checker reports. No result was promoted to open-cake-ir.
 
 The residual therefore recurs when this native ELF is supplied directly. The earlier fatbin's selected payload, any loader/cache transformation, native instruction arithmetic and the cause of the residual remain unresolved.
+
+## Successor: bitcode-only carrier rejected before execution
+
+Source `3a08040` extends the same host-only collector to protocol v2, with an explicit image kind and one shared launch/snapshot path. The [guide](../experiments/wmma_module/README.md) pins v1 replay to its earlier source. The new candidate packages the **unchanged retained wrapped bitcode**, using the installed MetaX bundler. Its 15,324 bytes contain two descriptors: an empty host entry and one 11,216-byte `maca-mxc-metax-macahca--xcore1000-bc` payload. It has no native entry. The standalone tool emits a 12-byte `__FILE_END__` trailer without NUL; CPU checks verify that exact form and compare the complete payload against the independent original extraction.
+
+The predeclared plan starts with a native-v2 control, then two bitcode orders and a separate trace. Its [route-observation record](../data/results/20261008-wmma-bitcode-route.json) keeps completed numerical checks separate from the failed load:
+
+| Stage | Observed outcome |
+| --- | --- |
+| Native ELF control, WMMA first | Load and both launches complete. WMMA fails only C00 by -2^-31; scalar is exact. Both full guarded outputs match the earlier native-module run after complete input matching. |
+| Bitcode carrier, WMMA first | `mcModuleLoadData` returns `mcErrorNoKernelImageForDevice`; collector exits 1 before function lookup or launch. |
+| Bitcode scalar-first and trace | Not started under the declared stop rule. No fallback or retry occurred. |
+
+The runtime reports that the fatbin does not contain an `xcore1002` binary. Its diagnostic suggests an `--offload-arch=xcore1002` build, but that option was not qualified here. The preceding control successfully used the retained native payload compiled for family `xcore1000`. This refusal therefore does not establish a general C550 compiler-target rule or identify which format, entry-selection or JIT rule caused it.
+
+The failed attempt retains only the supplied-image file, two host-prepared input files and one device record. The source throws at the checked load call before allocating the collector's device buffers, uploading its inputs, taking snapshots or launching q7. **No bitcode-route numerical result exists.** The `loaded-image.bin` filename records the supplied buffer; it does not mean loading succeeded. Post-release CPU inspection confirms that buffer equals the prepared carrier and still contains the exact original bitcode. These successful input checks do not turn the rejected load into accepted execution.
+
+Independent analysis checks 8,960 native-control input/snapshot/payload/guard words and the failed attempt's 2,048 host-prepared halfwords separately. Native values are finite, snapshots agree and guards remain intact. `MACA_MODULE_LOADING` is unset in the successful native collector's record and in the failed attempt's requested environment; the latter has no complete collector protocol record. Both cache directories remain empty in the recorded file observations, which do not prove the absence of internal runtime work.
+
+Frozen source passed 229 CPU tests, both actual input forms passed the CPU preparation gate, and 12 host-binary refusals passed before admission. Both attempted workers, their observed process groups and their lock-PID observations passed release checks. No profiler ran. The bitcode case establishes rejection of this exact carrier on this installed route; it does not establish general bitcode incompatibility, numerical failure, old fatbin selection, native instructions or the arithmetic cause. No performance or open-cake-ir promotion is accepted.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

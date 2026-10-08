@@ -73,6 +73,8 @@ For CPU-only inspection, follow the [compiled-artifact guide](compiled-artifacts
 
 The subsequent [explicit native-module route](../experiments/wmma_module/README.md) uses a host-only C++ driver and supplies only that extracted ELF. Its [measured result](../wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) reproduces the residual with exact scalar output. The tested `kernelParams` call follows installed and published examples despite a contradictory API warning; its success is bounded to these kernels and arguments.
 
+In a later v2 comparison, the same host collector's native control completes, while a generated carrier containing only the retained bitcode is [rejected at module loading](../wiki/wmma-exactness.md#successor-bitcode-only-carrier-rejected-before-execution). The diagnostic names a missing `xcore1002` binary. It is an observation of this loader/input pair, not a qualified replacement compiler flag or proof that all bitcode routes fail. The bitcode attempt reaches no kernel output.
+
 A separate CPU-only metadata query found Torch 2.10.0 and Triton 3.6.0 with the package suffix `metax3.8.0.4.c600u` in an existing containerd environment. That is not the host 3.5.3 test environment. This wiki has not executed or qualified a matrix kernel in that container. The online mcTriton 3.0 observations below likewise do not replace inspection of that installation's backend.
 
 ## mcTriton source observations

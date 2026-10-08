@@ -92,6 +92,8 @@ The next useful evidence would identify runtime payload selection and any post-l
 
 A later, separate [native-module experiment](../wiki/wmma-exactness.md#successor-explicit-native-elf-module-loading) supplies only the extracted native ELF to a host-only driver. It successfully loads and launches both kernels and retains the same q7 residual. That device evidence belongs to its own frozen source and result; it does not establish the earlier fatbin's payload choice or final instruction identity.
 
+The subsequent [bitcode-carrier experiment](../wiki/wmma-exactness.md#successor-bitcode-only-carrier-rejected-before-execution) packages only the unchanged wrapped bitcode plus an empty host descriptor. The installed bundler emits a 15,324-byte standalone carrier with a 12-byte `__FILE_END__` trailer, without the extra NUL observed in the old embedded section. Structure and payload checks pass, but `mcModuleLoadData` rejects this carrier before numerical execution. Packaging validity, runtime image selection and numerical acceptance are separate checks.
+
 [bundle]: https://releases.llvm.org/19.1.0/tools/clang/docs/ClangOffloadBundler.html#bundled-binary-file-layout
 [bitcode]: https://releases.llvm.org/19.1.0/docs/BitCodeFormat.html#bitcode-wrapper-format
 [objcopy]: https://releases.llvm.org/19.1.0/docs/CommandGuide/llvm-objcopy.html

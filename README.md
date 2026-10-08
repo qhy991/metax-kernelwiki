@@ -10,7 +10,7 @@
 | --- | --- |
 | 看现阶段做了什么、下一步测什么 | [研究进展](docs/research-log.md) |
 | 区分产品、原生 ISA 与兼容架构值 | [设备身份](wiki/device-identity.md) |
-| 查看wave64、shuffle子组与归约尾部 | [collective边界实测](wiki/wave-collectives.md) |
+| 查看wave64、shuffle子组与mask类型 | [collective边界实测](wiki/wave-collectives.md) |
 | 查看同结果转置的优化与尾部验证 | [转置分块与 padding](wiki/transpose.md) |
 | 查看固定地址集合的访存复验 | [读取排列与时间](wiki/memory-order.md) |
 | 理解 512/1024 线程与首次启动 | [launch bounds 与运行时重编译](wiki/launch-bounds.md) |
@@ -23,7 +23,7 @@
 
 首轮已在 C550 / MACA 3.5.3.18 完成 **49 个 case**，逐位检查 **22,042,413 个有效输出**及边界 guard。公开记录保存全部 **490 个计时批次**；四进程平衡顺序确认和含 1020 个 GPU kernel 的独立 trace 也已完成。缓存策略、时钟、导出时间单位及并发覆盖限制见[研究进展](docs/research-log.md)。
 
-后继实验覆盖 [1024-thread 与重编译路径](wiki/launch-bounds.md)、[固定地址集合的读取排列](wiki/memory-order.md)，以及[同结果转置的分块、padding 和固定容量行距对照](wiki/transpose.md)。另有[完整wave的shuffle与整数归约](wiki/wave-collectives.md)边界验证，并公开实际整数输出。各轮保留独立源码、完整输出检查、进程级复验和 profiler 记录；具体条件与未覆盖范围以对应机制页为准。
+后继实验覆盖 [1024-thread 与重编译路径](wiki/launch-bounds.md)、[固定地址集合的读取排列](wiki/memory-order.md)，以及[同结果转置的分块、padding 和固定容量行距对照](wiki/transpose.md)。另有[完整wave的shuffle、整数归约与mask类型](wiki/wave-collectives.md)边界验证，并公开实际整数输出。各轮保留独立源码、完整输出检查、进程级复验和 profiler 记录；具体条件与未覆盖范围以对应机制页为准。
 
 ## 检索
 

@@ -91,9 +91,19 @@
 
 四个设备worker及两个profiled应用均已退出并验证释放。独立干净源码通过83项CPU检查，本机MXCC编译通过；无设备可见的block32/n32及block64/n65负对照在host拒绝。仍不向open-cake-ir提升。此前`9a23cb8`发布的公有仓库CI已通过。
 
+## 2026-10-08：完整typed mask的SDK重载边界
+
+源码`715e877`保留默认九通道探针，另增加mask-types双通道模式。编译验证unsigned32、unsigned long64、uint64_t类型身份、两个字面量类型和SDK的MACA_HALF_WARP_SIZE=32；两个typed变量直接传原生重载，没有公共wide-mask包装，也不执行截断的64-bit局部mask。
+
+新模式正序20case、逆序20case与2个trace case全部通过；完整128thread的64-bit通道返回2080/6176，32-bit兼容通道返回528/1552/2576/3600。n65/thread127为[65,0]。这是两个API合同的分组差异，physical wave仍64，mask类型与数值都不同，不发布type-only因果或速度比。
+
+[同一机制页的后继章节](../wiki/wave-collectives.md#后继两种完整typed-mask选择不同归约入口) · [所有实际输出与原始批次](../data/results/20261008-mask-overloads.json)。另有默认mode0的20case完整回归；合计62case、27840payload、3968guards和620batches通过。两个新模式trace各110kernel，16regs/shared0/private0，重编译标志均false。
+
+全部5个device worker及2个profiled应用已退出。干净源码89项CPU检查通过，两个模式本机编译及4个无设备host负对照通过。第一次摘要采集遗漏空目录，严格投影因此拒绝；后继只读归档保留远端原始空目录后通过，未改实验或补造目录状态。仍不向open-cake-ir提升。之前`1f6a50a`的公有仓库CI已通过。
+
 ## 下一轮问题
 
-- 安装头文件同时出现64-bit与32-bit mask参数的整数归约入口；先查清各自源代码合同，再单独比较参数类型是否改变分组。保留本轮完整64-bit mask证据，不能用另一入口结果覆盖它。
-- 对逻辑尾部继续保持物理线程参与，后续负数/浮点或部分mask需要新的明确数值与参与合同。
-- 对dynamic shared的形状差异寻找有定义的资源/计数器证据，不能从请求量除法推断驻留或bank几何。
-- 向矩阵编译路线推进前核对实际安装backend与工具链，不从兼容架构号继承硬件能力。
+- 转向实际安装的矩阵编译路线：CPU阶段核对Python包/backend源码、原生编译目标和offline编译接口，不能从Triton兼容架构号继承硬件能力。
+- 为首个小型矩阵kernel固定输入、累加精度、外部oracle和误差合同；编译与输入准备先于设备分配。
+- 稀疏mask、负数或浮点仍是独立问题，不扩展当前两个完整typed mask的验证范围。
+- dynamic shared形状差异仍需有定义的资源/计数器证据；不从请求量除法推断驻留或bank几何。

@@ -53,7 +53,7 @@ export LD_LIBRARY_PATH="$MACA_PATH/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 本库已在完整64/128线程block上验证直接shuffle与整数求和，所有参与线程都保存输出，逻辑尾部补0且无线程提前退出；[wave64实测页](../wiki/wave-collectives.md)列出准确范围和全部实际输出。[同步章节][cpp-sync]单独声明`__syncwarp`的内存顺序保证，不能用寄存器shuffle代替shared-memory同步。
 
-官方页面仍是系列接口契约；本机已另行核对64-bit mask类型、安装头文件和该探针的编译执行。down-shuffle越界说明、xor正文措辞及vote mask类型存在不协调之处，没有据此推导未测边界。安装头文件还存在不同mask参数类型的归约重载，其兼容语义留待新实验，不能由这一轮完整64-bit mask结果代替。
+官方页面仍是系列接口契约；本机已另行核对64-bit mask类型、安装头文件和该探针的编译执行。down-shuffle越界说明、xor正文措辞及vote mask类型存在不协调之处，没有据此推导未测边界。安装头文件中的不同mask参数类型已由[独立后继对照](../wiki/wave-collectives.md#后继两种完整typed-mask选择不同归约入口)验证：当前SDK的unsigned完整32-bit入口按32元素分组，unsigned long完整64-bit入口按64元素分组。物理wave仍为64；其他mask值、参与模式和版本不在这一结论范围。
 
 ## mcTriton 源码事实
 

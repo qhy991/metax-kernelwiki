@@ -188,7 +188,7 @@
     },
     {
       "id": "c550-wave64-collectives",
-      "title": "C550 wave64：shuffle子组、整数归约与逻辑尾部",
+      "title": "C550 wave64：shuffle、归约与mask参数类型边界",
       "tags": [
         "wave64",
         "shuffle",
@@ -199,7 +199,10 @@
         "warp",
         "归约",
         "尾部",
-        "C550"
+        "C550",
+        "mask-types",
+        "unsigned",
+        "compatibility"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "local-measurement",
@@ -207,10 +210,11 @@
       "sources": [
         "https://github.com/qhy991/metax-kernelwiki/tree/d01ef59446a2d512ad747989d55938dbf21653dd",
         "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-shuffle",
-        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-reduce"
+        "https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-reduce",
+        "https://github.com/qhy991/metax-kernelwiki/tree/715e8771b435fde1463787b6c5996d38a0b5ca1f"
       ],
-      "result": "data/results/20261008-wave-collectives.json",
-      "limitations": "完整wave64及完整64-bit mask、位置编码非负int32与补零；不覆盖部分参与、其他mask入口/类型、溢出或浮点。全kernel事件时间不是intrinsic延迟或吞吐。"
+      "result": "data/results/20261008-mask-overloads.json",
+      "limitations": "两种完整typed mask在当前SDK分别对应64/32元素语义组，物理wave仍64；类型与mask数值同时改变，不是type-only因果或同算子速度比较。不覆盖稀疏mask、溢出或浮点。"
     }
   ]
 }

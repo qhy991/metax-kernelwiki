@@ -185,8 +185,20 @@ Overall: 210 logical cases, 408 matrices and 4,080 batches; WMMA128/210 exact wi
 
 Frozen source passed 172 CPU tests and a separate host C++ encoder check of 155 inputs/four refusals. All eight native builds, 31 input/format negatives and three mode negatives passed before GPU work. The original CPU-build SSH connection closed with exit255; inspection found five completed builds, no compiler processes and three untouched modes. A separate continuation built only those three, preserving all earlier records and the unknown original driver's exit/cause. No GPU stage required a retry.
 
+## 2026-10-09: Reciprocal exponents at fixed products
+
+Source `b1eefc4` adds a closed reciprocal contract: q6/q7/q12, A exponent e=-2,-1,0,1,2, B exponent -e, and positive/negative/paired roles. All 45 parameter conditions have distinct complete inputs. Every exact product and the paired reference -1/256 stay fixed while operand exponents change. Both exponent fields are bound explicitly; old modes, encoders and device/launch bodies remain unchanged. The run ID `20261008-wmma-reciprocal` uses the UTC date.
+
+Both full opposite-order sweeps find every standalone component and scalar matrix exact. q6 pairs are exact; q7/q12 pairs each have only C00 unequal, always `0xbb800001` versus `0xbb800000`, with residual -2^-31 and adjacent-FP32 distance 1. For each fixed q/role/implementation/order, complete buffers are identical across all five exponent pairs. Corresponding outputs match across orders and all three traces. This bounded invariance does not identify the arithmetic cause or establish behavior under arbitrary factorization or sign placement. The fixed-reference residual is not divided by an operand's scale.
+
+Only q7 paired e=-2,0,+2 were profiled. [Full reciprocal results](../wiki/wmma-exactness.md#successor-reciprocal-exponents-with-fixed-products) · [All actual words and batches](../data/results/20261008-wmma-reciprocal.json). Primary coverage is 93 logical observations/186 matrices: WMMA 70/93 exact with 23 mismatches, scalar 93/93 exact. Eight auxiliary suites add 162 logical cases / 312 matrices. Nine primary conditions form 11 links to older scale patterns; 38 measured primary variant outputs generate 46 historical comparison rows because of prior aliases. With 312 auxiliary rows, all 358 comparisons agree and cover 350 current variant outputs. Comparison counts are not extra measurements.
+
+Overall: 255 logical cases, 498 matrices and 4,980 batches; WMMA 163/255 exact with 852 unequal elements, scalar 243/243 exact. All snapshots agree, outputs are finite and guards intact. Correctness acceptance remains failed and performance unaccepted. All 13 device workers and three profiled applications exited and passed release checks; no promotion to open-cake-ir.
+
+Frozen source passed 181 CPU tests. A separate host-only compilation of its metadata emitter matched all 15 protocol fields and 45 pattern records, including required plural lists. Nine native modes compiled in individual retained stages; 38 input/format negatives and three mode negatives passed before GPU admission. No compilation or device stage was retried.
+
 ## Next questions
 
-- Compare reciprocal A×2^e / B×2^-e factorization with matched components, preserving the exact products, relative cancellation and reference. This needs a new input contract and has not been executed; the A-only result does not predict its outcome. Product-preserving sign transfers remain another input question.
+- Transfer each nonzero term's sign between A and B while preserving its signed product, with matched standalone controls and a new input contract. This proposed comparison has not been executed; reciprocal exponent redistribution preserves sign placement and cannot establish that response.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

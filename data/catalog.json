@@ -212,7 +212,7 @@
     },
     {
       "id": "c550-wmma-exactness",
-      "title": "C550 WMMA exactness: power-of-two A scaling and normalized residuals",
+      "title": "C550 WMMA exactness: reciprocal exponents at fixed products",
       "tags": [
         "WMMA",
         "matrix",
@@ -247,7 +247,11 @@
         "power-of-two scaling",
         "dyadic inputs",
         "normalized residual",
-        "input aliases"
+        "input aliases",
+        "reciprocal exponents",
+        "fixed products",
+        "factorization",
+        "plural historical matches"
       ],
       "confidence": "locally-measured",
       "evidence_scope": "device-correctness",
@@ -261,10 +265,11 @@
         "https://github.com/qhy991/metax-kernelwiki/tree/7b8ee81f3a94dd5906f892408df2fb7086ee69a3",
         "https://github.com/qhy991/metax-kernelwiki/tree/d1e1be94cdbada03039494c3b5483439cda25791",
         "https://github.com/qhy991/metax-kernelwiki/tree/9b6c28c9e700b3183cd2febb2a684c52844a3bd7",
-        "https://github.com/qhy991/metax-kernelwiki/tree/2725811e7242d7ab113bba0211377c74a30114b5"
+        "https://github.com/qhy991/metax-kernelwiki/tree/2725811e7242d7ab113bba0211377c74a30114b5",
+        "https://github.com/qhy991/metax-kernelwiki/tree/b1eefc4e4263cf0a001a691d15ff9a1bd314b493"
       ],
-      "result": "data/results/20261008-wmma-scales.json",
-      "limitations": "For q6/q7/q12 and A scaled by 2^e with e=-2,-1,0,1,2, q6 pairs are exact; q7/q12 have signed residual -2^(e-31), normalized residual -2^-31 and one adjacent FP32 step. Components and scalar controls are exact. The 45 conditions contain 41 distinct input pairs. Only q7 pairs at e=-2,0,+2 are profiled. No general scaling law, unique arithmetic cause or performance acceptance follows."
+      "result": "data/results/20261008-wmma-reciprocal.json",
+      "limitations": "For q6/q7/q12, reciprocal A×2^e and B×2^-e at e=-2,-1,0,1,2 preserve the exact products/reference and give identical complete outputs within each q/role. q6 pairs are exact; q7/q12 have signed residual -2^-31 and one adjacent FP32 step. Components and scalar controls are exact. Only q7 pairs at e=-2,0,+2 are profiled. This establishes no arbitrary-factorization or sign-placement invariance, unique arithmetic cause, or performance acceptance."
     }
   ]
 }

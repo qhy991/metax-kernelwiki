@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. Prepared inputs are valid, guards are intact and all outputs are finite. Scalar controls are exact. The [fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) tests products `(q, -(q+1))/256` for every integer q from 1 through 14. Their exact sum is always -1/256: pairs at q1–6 are exact, while q7–14 each have one C00 residual of -2^-31. This is a bounded input-grid observation, not a universal threshold or an identified arithmetic mechanism. The latest [power-of-two A-scaling study](#successor-exact-power-of-two-scaling-of-a) finds q6 exact at all five tested scales, while q7 and q12 retain a signed residual of -2^-31 after normalization by the scale factor.
+In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. Prepared inputs are valid, guards are intact and all outputs are finite. Scalar controls are exact. The [fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) tests products `(q, -(q+1))/256` for every integer q from 1 through 14. Their exact sum is always -1/256: pairs at q1–6 are exact, while q7–14 each have one C00 residual of -2^-31. This is a bounded input-grid observation, not a universal threshold or an identified arithmetic mechanism. The [A-scaling study](#successor-exact-power-of-two-scaling-of-a) finds a constant normalized residual at q7/q12. The latest [reciprocal-exponent control](#successor-reciprocal-exponents-with-fixed-products) holds each product and reference fixed: complete outputs remain unchanged across its five exponent pairs, with q6 exact and q7/q12 retaining a signed residual of -2^-31.
 
 ## Reading guide
 
@@ -13,7 +13,7 @@ In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16�
 | Do captured inputs and a scalar control agree? | [Input snapshots and scalar results](#successor-device-input-snapshots-and-a-scalar-fp32-source-control) |
 | Can the residual be reproduced with two products? | [K-prefix scan](#successor-logical-k-prefixes-and-a-two-term-witness) · [Isolation and relocation](#successor-isolation-and-relocation-of-the-two-products) |
 | What changes with placement, signs or magnitudes? | [Components and K slots](#successor-single-products-and-k-slot-permutations) · [Sign configurations](#successor-fixed-magnitude-sign-configurations) · [Fixed-result magnitude scan](#successor-adjacent-product-magnitudes-at-a-fixed-result) |
-| Does exact scaling change the numerical response? | [Power-of-two scaling of A](#successor-exact-power-of-two-scaling-of-a) |
+| Does exact scaling change the numerical response? | [A-only scaling](#successor-exact-power-of-two-scaling-of-a) · [Reciprocal exponents at fixed products](#successor-reciprocal-exponents-with-fixed-products) |
 
 In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
@@ -335,7 +335,43 @@ Overall coverage is 210 logical cases, 408 matrices, 104,448 payload words, 52,2
 
 Frozen source passed 172 CPU tests. A separate host-only C++ check verified 155 encoder inputs and four domain refusals; it is not GPU coverage. All eight native modes compiled, and 31 input/format negatives plus three incompatible-mode negatives passed with devices hidden. The SSH connection carrying the original CPU build sequence closed with exit 255; subsequent inspection found five completed builds, no remaining compiler process and three untouched modes. A separately retained continuation built only those three modes. The SSH exit was 255; the original remote driver's exit and the disconnect's cause remain unknown. No build record was overwritten. All **12 device workers and three profiled applications** subsequently exited and passed release checks. No result was promoted to open-cake-ir.
 
-A proposed next contrast is reciprocal scaling, A×2^e and B×2^-e, with matched components. That would preserve each exact product, relative cancellation and the final reference while changing operand exponents and factorization. It needs a separate input contract and has not been executed. The current A-only scale result cannot predict its outcome. Product-preserving sign placement and independently qualified SDK comparisons remain other open questions.
+The successor below tests reciprocal scaling under a separate input contract, preserving the exact products and reference while redistributing operand exponents. The A-only study itself does not establish those outcomes. Product-preserving sign placement and independently qualified SDK comparisons remain open questions.
+
+## Successor: reciprocal exponents with fixed products
+
+Source `b1eefc4` adds a separate `reciprocal-control` contract with **45 conditions and 45 distinct complete A/B pairs**. It tests q in {6,7,12}, A exponent e in {-2,-1,0,1,2}, and positive, negative or paired roles. Logical M=N=16, K=2, target C[0,0], physical participation, both device kernels and launch helpers remain unchanged. The [probe guide](../experiments/wmma/README.md#explicit-reciprocal-input-scale-suite) defines the new mode-6 header and the two explicitly bound exponents.
+
+For the pair, **A=2^e×[-q,1]/16** and **B=2^-e×[-1,-(q+1)]/16**. Each exact product remains q/256 or -(q+1)/256, and the paired reference stays **-1/256**. Matching component controls set both operands of the inactive term to positive zero. All other input words are positive zero and all other reference outputs are zero. The nonzero operands remain exact normal binary16 values, including the largest magnitude 13/4 in B. The existing dyadic encoders are reused without widening their domain.
+
+The plan fixed two complete 45-condition sweeps in opposite case/implementation orders, plus three preselected q7 pair traces at e=-2,0,+2. All primary conditions use the same compiled mode-6 binary. This source continuity does not assert binary identity with an earlier study.
+
+Every standalone component and every scalar matrix is exact. The paired WMMA C00 words are identical in both complete sweeps:
+
+| A exponent e | B exponent -e | q6 WMMA | q7 WMMA | q12 WMMA |
+| ---: | ---: | --- | --- | --- |
+| -2 | 2 | `0xbb800000` | `0xbb800001` | `0xbb800001` |
+| -1 | 1 | `0xbb800000` | `0xbb800001` | `0xbb800001` |
+| 0 | 0 | `0xbb800000` | `0xbb800001` | `0xbb800001` |
+| 1 | -1 | `0xbb800000` | `0xbb800001` | `0xbb800001` |
+| 2 | -2 | `0xbb800000` | `0xbb800001` | `0xbb800001` |
+
+The paired reference is always `0xbb800000`, or -0.00390625. q6 is exact throughout. Each q7/q12 paired matrix has only C00 unequal, with observed value -0.003906250465661287: signed residual **-2^-31**, absolute error **2^-31**, and **one adjacent FP32 step below the reference**. These residuals are measured against a fixed reference; dividing them by A's scale would not describe whole-output scaling in this experiment.
+
+For every fixed q, role, implementation and sweep order, the complete output buffers are identical across the five reciprocal exponent pairs, including guards. Corresponding buffers also match across the two execution orders and between each trace and both sweeps. Every other primary output is numerically zero, all values are finite, guards are intact, and all **571,392 primary snapshot halfwords** match their prepared and declared values.
+
+The exact CPU sum of the observed standalone targets equals the paired reference in each condition. Subtracting that sum from the observed paired WMMA target gives the signed residual above. This is derived arithmetic on retained outputs, not a separate GPU addition test. The prior A-only study changed the product and result scale. This study holds those quantities fixed and observes no output change under the five tested exponent redistributions. It does not establish invariance to arbitrary factorization, sign placement, subnormal inputs or other software versions, and it does not identify the internal arithmetic or a unique hardware/compiler cause.
+
+Only the q7 pair at e=-2,0,+2 has primary profiler evidence. No component, q6, q12 or e=±1 condition was profiled. Each trace contains 220 actual kernel events, with separate 110-event WMMA/scalar groups and ten warmups each. Descriptors remain WMMA block64/28 registers and scalar block256/36 registers, zero shared/private memory, and 110 false recompilation flags per group. Raw trace units remain unverified. No timing is accepted as a performance result.
+
+The [complete reciprocal record](../data/results/20261008-wmma-reciprocal.json) retains all actual words and raw batches. Primary coverage is **93 paired logical observations, 186 matrices and 1,860 batches**, with 47,616 payload words, 23,808 guards and 190,464 prepared halfwords. WMMA is exact in 70/93 matrices, with 23 unequal elements in the other 23 matrices. Scalar is exact in 93/93. Eight auxiliary suites add 162 logical cases and 312 matrices, all matching the corresponding earlier buffers.
+
+Historical matching examines every complete prior A/B array and retains all matches. Nine primary conditions match earlier one-sided-scale data, forming eleven condition-to-prior-pattern links because two old positive controls have aliases. Across the two sweeps and the matching trace, **38 currently measured primary variant outputs produce 46 historical comparison rows**. Adding the 312 auxiliary rows gives **358 comparisons covering 350 current variant outputs**; all agree. Comparisons to multiple old aliases are not additional device measurements.
+
+Overall coverage is 255 logical cases, 498 matrices, 127,488 payload words, 63,744 guards, 522,240 prepared halfwords, 1,492,992 snapshot halfwords and 4,980 raw batches. Scalar is exact in 243/243 matrices. WMMA has 163/255 exact matrices and 852 unequal elements in the remainder. The aggregate remains `correctness.passed=false` and `performance_accepted=false`.
+
+Frozen source passed 181 CPU tests. A separate host-only compilation of the frozen metadata emitter matched all 15 protocol fields and all 45 pattern records, including plural historical lists. Nine native modes compiled through separate retained CPU stages; 38 input/format negatives and three incompatible-mode negatives passed with devices hidden. All **13 device workers and three profiled applications** exited and passed release checks. No result was promoted to open-cake-ir.
+
+A proposed next contrast can transfer each nonzero term's sign between A and B while preserving its signed product, with matching component controls. The current reciprocal study preserves sign placement, so it cannot establish that response. Such a contrast needs a separate input contract and has not been executed. Native codegen investigation and independently qualified SDK comparisons remain open.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

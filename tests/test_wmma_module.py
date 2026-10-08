@@ -35,6 +35,14 @@ def synthetic_wrapped_bitcode():
     return bytes(data)
 
 
+def synthetic_producer_wrapper():
+    data = bytearray(7360)
+    struct.pack_into("<5I", data, 0, 0x0b17c0de, 0, 20, 7332, 255)
+    data[20:24] = b"BC\xc0\xde"
+    data[100:104] = b"LOAD"
+    return bytes(data)
+
+
 def synthetic_bundle():
     # Deliberately independent literals; this fixture is not executable bitcode.
     data = bytearray(15324)
@@ -63,7 +71,8 @@ class WmmaModuleTest(unittest.TestCase):
     def fixture(self, parent, order="wmma-first", image_kind="native-elf"):
         output, expected = parent / "output", parent / "expected-image.elf"
         output.mkdir()
-        image = synthetic_image() if image_kind == "native-elf" else synthetic_bundle()
+        image = {"native-elf": synthetic_image, "retained-bitcode-bundle": synthetic_bundle,
+                 "retained-wrapped-bitcode": synthetic_wrapped_bitcode}[image_kind]()
         expected.write_bytes(image)
         (output / "loaded-image.bin").write_bytes(image)
         if image_kind == "retained-bitcode-bundle":
@@ -114,12 +123,32 @@ class WmmaModuleTest(unittest.TestCase):
             command += ["--expected-bitcode", str(bitcode)]
         return subprocess.run(command + list(extra), capture_output=True, text=True)
 
+    def producer_fixture(self, parent):
+        output, expected = parent / "output", parent / "expected-image.bin"
+        output.mkdir()
+        expected.write_bytes(synthetic_producer_wrapper())
+        (output / "loaded-image.bin").write_bytes(synthetic_producer_wrapper())
+        records = [dict(check.producer_request_metadata(), environment={key: None for key in check.ENVIRONMENT}),
+                   dict(type="device", name="MetaX C550", logical_device=0, visible_device_count=1,
+                        wave_size_api=64, pci_bus_id="synthetic-test-device", runtime_version_api=1,
+                        driver_version_api=1, max_threads_per_block=512),
+                   dict(type="module", module_loaded=True, image_file="loaded-image.bin"),
+                   dict(type="function", symbol="mcrtc_format_probe", lookup_succeeded=True),
+                   dict(type="complete", module_unloaded=True, device_synchronized=True,
+                        collector_kernel_launches=0, numerical_evaluation="not_applicable")]
+        self.save(output, records)
+        return output, expected, records
+
+    def producer_cli(self, output, expected, extra=()):
+        return subprocess.run(["python3", str(MODULE), str(output), "--producer-load", "--expected-image", str(expected), *extra],
+                              capture_output=True, text=True)
+
     def test_both_orders_exact_outputs_pass_and_match_image(self):
         for order in check.ORDERS:
             with self.subTest(order=order), tempfile.TemporaryDirectory() as directory:
                 output, expected, records = self.fixture(Path(directory), order)
                 result = check.check(output, "native-elf", expected)
-                self.assertEqual(result["schema"], "metax-kernelwiki.wmma-module-q7.v2")
+                self.assertEqual(result["schema"], "metax-kernelwiki.wmma-module-q7.v3")
                 self.assertEqual(result["status"], "pass")
                 self.assertTrue(result["passed"] and result["integrity_passed"] and result["numeric_passed"])
                 self.assertEqual(list(result["variants"]), list(check.ORDERS[order]))
@@ -297,7 +326,7 @@ class WmmaModuleTest(unittest.TestCase):
                 output, expected, _ = self.fixture(parent, order, "retained-bitcode-bundle")
                 reference = parent / "expected-bitcode.bc"
                 result = check.check(output, "retained-bitcode-bundle", expected, reference)
-                self.assertEqual((result["schema"], result["status"]), ("metax-kernelwiki.wmma-module-q7.v2", "pass"))
+                self.assertEqual((result["schema"], result["status"]), ("metax-kernelwiki.wmma-module-q7.v3", "pass"))
                 self.assertTrue(result["module_image"]["expected_bitcode_equal"])
                 self.assertEqual(result["module_image"]["bitcode_bytes_checked"], 11216)
                 self.assertNotIn("machine_raw", result["module_image"])
@@ -448,6 +477,188 @@ class WmmaModuleTest(unittest.TestCase):
                            (synthetic_wrapped_bitcode(), "retained-bitcode-bundle"), (synthetic_image(), True)):
             with self.subTest(kind=kind), self.assertRaises(check.StructuralError):
                 check.inspect_image(data, kind)
+
+    def test_direct_q7_wrapper_preserves_both_orders_and_exact_oracle(self):
+        for order in check.ORDERS:
+            with self.subTest(order=order), tempfile.TemporaryDirectory() as directory:
+                output, expected, _ = self.fixture(Path(directory), order, "retained-wrapped-bitcode")
+                result = check.check(output, "retained-wrapped-bitcode", expected)
+                self.assertEqual((result["schema"], result["status"]), ("metax-kernelwiki.wmma-module-q7.v3", "pass"))
+                image = result["module_image"]
+                self.assertEqual((image["image_bytes"], image["inner_bitcode_bytes"], image["bitcode_offset"],
+                                  image["cpu_type_raw"], image["trailing_padding_bytes"]), (11216, 11184, 20, 255, 12))
+                self.assertNotIn("machine_raw", image)
+                self.assertNotIn("bundle_entries", image)
+                self.assertNotIn("expected_bitcode_equal", image)
+                self.assertEqual(self.cli(output, expected, "retained-wrapped-bitcode").returncode, 0)
+                for variant in ("wmma", "scalar"):
+                    words = exact_output()
+                    words[64] ^= 1
+                    path = output / (variant + ".f32")
+                    path.write_bytes(struct.pack("<384I", *words))
+                    failed = check.check(output, "retained-wrapped-bitcode", expected)
+                    self.assertEqual((failed["status"], failed["passed"]), ("numeric_failed", False))
+                    self.assertEqual(failed["variants"][variant]["mismatches"][0]["expected_value"], -1 / 256)
+                    self.assertEqual(self.cli(output, expected, "retained-wrapped-bitcode").returncode, 1)
+                    path.write_bytes(struct.pack("<384I", *exact_output()))
+
+    def test_both_direct_wrappers_have_closed_extents_and_headers(self):
+        for kind, data in (("retained-wrapped-bitcode", synthetic_wrapped_bitcode()),
+                           ("mcrtc-producer-wrapped", synthetic_producer_wrapper())):
+            image = check.inspect_image(data, kind)
+            self.assertEqual(image["image_format"], "LLVM_BITCODE_WRAPPER")
+            for offset in (0, 4, 8, 12, 16, 20, len(data) - 1):
+                changed = bytearray(data)
+                changed[offset] ^= 1
+                with self.subTest(kind=kind, offset=offset), self.assertRaises(check.StructuralError):
+                    check.inspect_image(changed, kind)
+            for changed in (data[:-1], data + b"\0", synthetic_image(), synthetic_bundle()):
+                with self.subTest(kind=kind, extent=len(changed)), self.assertRaises(check.StructuralError):
+                    check.inspect_image(changed, kind)
+            with self.assertRaises(check.StructuralError):
+                check.verify_image_payload(data, kind, synthetic_wrapped_bitcode())
+
+    def test_direct_wrapper_identity_rejects_mutation_missing_and_self_references(self):
+        for producer in (False, True):
+            for mutation in ("interior", "missing", "self", "hardlink"):
+                with self.subTest(producer=producer, mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                    parent = Path(directory)
+                    output, expected, _ = (self.producer_fixture(parent) if producer else
+                                           self.fixture(parent, image_kind="retained-wrapped-bitcode"))
+                    if mutation == "interior":
+                        data = bytearray((output / "loaded-image.bin").read_bytes())
+                        data[100] ^= 1
+                        check.inspect_image(data, "mcrtc-producer-wrapped" if producer else "retained-wrapped-bitcode")
+                        (output / "loaded-image.bin").write_bytes(data)
+                    elif mutation == "missing": expected.unlink()
+                    elif mutation == "self": expected = output / "loaded-image.bin"
+                    else:
+                        expected.unlink()
+                        os.link(output / "loaded-image.bin", expected)
+                    result = self.producer_cli(output, expected) if producer else self.cli(output, expected, "retained-wrapped-bitcode")
+                    self.assertEqual((result.returncode, result.stdout), (2, ""))
+                    self.assertEqual(json.loads(result.stderr)["error_kind"], "structural")
+
+    def test_producer_load_is_a_five_record_non_numerical_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, expected, records = self.producer_fixture(Path(directory))
+            self.assertEqual(len(records), 5)
+            result = check.check_producer_load(output, expected)
+            self.assertEqual((result["schema"], result["status"]), ("metax-kernelwiki.mcrtc-module-load.v1", "load_lookup_complete"))
+            self.assertTrue(result["receipt_valid"] and result["module_loaded"] and result["function_lookup_succeeded"])
+            self.assertTrue(result["module_unloaded"] and result["device_synchronized"])
+            self.assertEqual(result["function_symbol"], "mcrtc_format_probe")
+            self.assertEqual(result["collector_kernel_launches"], 0)
+            self.assertEqual(result["numerical_evaluation"], "not_applicable")
+            self.assertFalse(result["performance_accepted"])
+            for key in ("passed", "numeric_passed", "variants", "prepared_inputs", "snapshots"):
+                self.assertNotIn(key, result)
+            image = result["module_image"]
+            self.assertEqual((image["image_bytes"], image["inner_bitcode_bytes"], image["trailing_padding_bytes"]), (7360, 7332, 8))
+            self.assertTrue(image["expected_image_equal"])
+            self.assertEqual(self.producer_cli(output, expected).returncode, 0)
+
+    def test_producer_and_q7_modes_cannot_accept_each_others_records_or_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            output, expected, records = self.producer_fixture(parent)
+            with self.assertRaises(check.StructuralError): check.check(output, "retained-wrapped-bitcode", expected)
+            with self.assertRaises(check.StructuralError): check.module_metadata("mcrtc-producer-wrapped")
+            for image in (synthetic_wrapped_bitcode(), synthetic_bundle(), synthetic_image()):
+                expected.write_bytes(image)
+                (output / "loaded-image.bin").write_bytes(image)
+                with self.assertRaises(check.StructuralError): check.check_producer_load(output, expected)
+        with tempfile.TemporaryDirectory() as directory:
+            output, expected, records = self.fixture(Path(directory), image_kind="retained-wrapped-bitcode")
+            with self.assertRaises(check.StructuralError): check.check_producer_load(output, expected)
+            for schema in ("metax-kernelwiki.wmma-module-q7.v1", "metax-kernelwiki.wmma-module-q7.v2"):
+                changed = copy.deepcopy(records)
+                changed[2]["schema"] = schema
+                self.save(output, changed)
+                with self.assertRaises(check.StructuralError): check.check(output, "retained-wrapped-bitcode", expected)
+            self.save(output, records)
+            expected.write_bytes(synthetic_producer_wrapper())
+            (output / "loaded-image.bin").write_bytes(synthetic_producer_wrapper())
+            with self.assertRaises(check.StructuralError): check.check(output, "retained-wrapped-bitcode", expected)
+            self.assertEqual(self.cli(output, expected, "mcrtc-producer-wrapped").returncode, 2)
+
+    def test_producer_symbol_environment_deep_types_and_unload_are_strict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, expected, records = self.producer_fixture(Path(directory))
+            mutations = [(0, "schema", check.SCHEMA), (0, "image_kind", "retained-wrapped-bitcode"),
+                (0, "lookup_symbol", "other"), (0, "image_bytes", 7360.0), (0, "bitcode_offset", True),
+                (0, "collector_kernel_launches", False), (0, "load_api", "mcModuleLoad"),
+                (0, "lookup_api", "mcModuleGetGlobal"), (1, "visible_device_count", True),
+                (1, "wave_size_api", 32), (2, "module_loaded", False), (2, "module_loaded", 1),
+                (2, "image_file", "other.bin"), (3, "symbol", check.SYMBOLS["wmma"]),
+                (3, "lookup_succeeded", False), (3, "lookup_succeeded", 1),
+                (4, "module_unloaded", False), (4, "module_unloaded", 1),
+                (4, "device_synchronized", False), (4, "collector_kernel_launches", 1),
+                (4, "collector_kernel_launches", False), (4, "numerical_evaluation", "passed")]
+            for index, field, value in mutations:
+                changed = copy.deepcopy(records)
+                changed[index][field] = value
+                with self.subTest(index=index, field=field, value=value), self.assertRaises(check.StructuralError):
+                    check.validate_producer_metadata(changed)
+            for index, record in enumerate(records):
+                for field in record:
+                    changed = copy.deepcopy(records)
+                    changed[index].pop(field)
+                    with self.subTest(index=index, missing=field), self.assertRaises(check.StructuralError):
+                        check.validate_producer_metadata(changed)
+            for mutation in ("missing", "integer", "extra"):
+                changed = copy.deepcopy(records)
+                if mutation == "missing": changed[0]["environment"].pop("MACA_MODULE_LOADING")
+                elif mutation == "integer": changed[0]["environment"]["MACA_MODULE_LOADING"] = 0
+                else: changed[0]["machine_raw"] = 253
+                with self.subTest(mutation=mutation), self.assertRaises(check.StructuralError):
+                    check.validate_producer_metadata(changed)
+            for value in (None, "LAZY", "EAGER"):
+                records[0]["environment"]["MACA_MODULE_LOADING"] = value
+                check.validate_producer_metadata(records)
+
+    def test_partial_error_reordered_or_mixed_producer_evidence_refuses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, expected, records = self.producer_fixture(Path(directory))
+            swapped = copy.deepcopy(records)
+            swapped[2], swapped[3] = swapped[3], swapped[2]
+            for changed in (records[:-1], records[:3], records + [records[-1]], swapped,
+                            records[:-1] + [dict(type="error", message="mcModuleUnload failed")]):
+                self.save(output, changed)
+                with self.assertRaises(check.StructuralError): check.check_producer_load(output, expected)
+            self.save(output, records)
+            for name in ("prepared.a.f16", "after.b.f16", "wmma.f32", "scalar.f32"):
+                path = output / name
+                path.write_bytes(b"unexpected q7 file")
+                with self.subTest(file=name), self.assertRaises(check.StructuralError): check.check_producer_load(output, expected)
+                path.unlink()
+
+    def test_producer_cli_requires_independent_image_and_forbids_other_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, expected, _ = self.producer_fixture(Path(directory))
+            for extra in (("--image-kind", "mcrtc-producer-wrapped"), ("--image-kind", "retained-wrapped-bitcode"),
+                          ("--expected-bitcode", str(expected)), ("--inspect-image", str(expected))):
+                result = self.producer_cli(output, expected, extra)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+            for args in (["--producer-load", "--expected-image", str(expected)],
+                         [str(output), "--producer-load"], [str(output), "--expected-image", str(expected)]):
+                result = subprocess.run(["python3", str(MODULE), *args], capture_output=True, text=True)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+
+    def test_cpu_inspection_accepts_wrapper_kinds_without_redundant_bitcode_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            for kind, data in (("retained-wrapped-bitcode", synthetic_wrapped_bitcode()),
+                               ("mcrtc-producer-wrapped", synthetic_producer_wrapper())):
+                path = parent / (kind + ".bin")
+                path.write_bytes(data)
+                result = self.inspect_cli(path, kind)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                observed = json.loads(result.stdout)
+                self.assertEqual(observed["image"]["image_kind"], kind)
+                self.assertFalse(observed["module_loaded"])
+                self.assertFalse(observed["numerical_correctness_checked"])
+                self.assertEqual(self.inspect_cli(path, kind, path).returncode, 2)
 
 
 if __name__ == "__main__":

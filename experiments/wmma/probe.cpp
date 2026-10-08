@@ -22,12 +22,22 @@
 #if C550_WMMA_CONTROL != 0 && C550_WMMA_CONTROL != 1
 #error "C550_WMMA_CONTROL must be 0 or 1"
 #endif
+#ifndef C550_WMMA_PREFIX
+#define C550_WMMA_PREFIX 0
+#endif
+#if C550_WMMA_PREFIX != 0 && C550_WMMA_PREFIX != 1
+#error "C550_WMMA_PREFIX must be 0 or 1"
+#endif
+#if C550_WMMA_PREFIX && !C550_WMMA_CONTROL
+#error "C550_WMMA_PREFIX requires paired scalar control"
+#endif
 
 namespace {
 constexpr unsigned kOperandHalfwords = 1024;
 constexpr unsigned kOutputWords = 256;
 constexpr unsigned kGuardWords = 64;
-constexpr const char* kExperiment = C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
+constexpr const char* kExperiment = C550_WMMA_PREFIX ? "wmma-scalar-fp32-prefix-control"
+                                 : C550_WMMA_CONTROL ? "wmma-scalar-fp32-input-control" : "native-wmma-fp16-fp32-16x16";
 static_assert(sizeof(__half) == 2 && sizeof(float) == 4, "Probe requires FP16 operands and FP32 output");
 
 void check_mc(mcError_t status, const char* expression) {
@@ -59,16 +69,25 @@ struct Case {
 #if C550_WMMA_CONTROL
     std::string order;
 #endif
+#if C550_WMMA_PREFIX
+    std::string suite, family;
+#endif
     unsigned m = 0, n = 0, k = 0, warmups = 0, samples = 0, launches = 0;
     std::vector<uint16_t> a, b;
 };
 
 bool admitted_shape(const Case& c) {
+#if C550_WMMA_PREFIX
+    return c.suite == "prefix-control" && c.k <= 16
+        && ((c.family == "singleton" && c.m == 1 && c.n == 1)
+            || (c.family == "dense" && c.m == 16 && c.n == 16));
+#else
     const unsigned shapes[][3] = {{16,16,0},{1,1,1},{16,16,16},{15,16,16},{16,15,16},{15,15,15},
                                  {7,9,17},{15,16,31},{16,15,32},{16,16,33},{9,7,63},{16,16,64}};
     for (const auto& shape : shapes)
         if (c.m == shape[0] && c.n == shape[1] && c.k == shape[2]) return true;
     return false;
+#endif
 }
 
 uint16_t sixteenth_bits(int numerator) {
@@ -108,7 +127,8 @@ void validate_inputs(const Case& c) {
 std::vector<Case> read_plan(const std::string& directory) {
     std::ifstream file(directory + "/cases.tsv");
     std::string line;
-    const char* header = C550_WMMA_CONTROL ? "id\tm\tn\tk\torder\twarmups\tsamples\tlaunches"
+    const char* header = C550_WMMA_PREFIX ? "id\tm\tn\tk\tsuite\tfamily\torder\twarmups\tsamples\tlaunches"
+                        : C550_WMMA_CONTROL ? "id\tm\tn\tk\torder\twarmups\tsamples\tlaunches"
                                          : "id\tm\tn\tk\twarmups\tsamples\tlaunches";
     if (!file || !std::getline(file, line) || line != header)
         throw std::runtime_error("Unsupported or missing cases.tsv");
@@ -118,8 +138,13 @@ std::vector<Case> read_plan(const std::string& directory) {
         Case c;
         std::string trailing;
 #if C550_WMMA_CONTROL
+#if C550_WMMA_PREFIX
+        if (!(row >> c.id >> c.m >> c.n >> c.k >> c.suite >> c.family >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
+            throw std::runtime_error("Invalid prefix-control case row");
+#else
         if (!(row >> c.id >> c.m >> c.n >> c.k >> c.order >> c.warmups >> c.samples >> c.launches) || (row >> trailing))
             throw std::runtime_error("Invalid control case row");
+#endif
         if (c.order != "wmma-first" && c.order != "scalar-first")
             throw std::runtime_error("Unknown WMMA/scalar variant order");
 #else
@@ -130,14 +155,17 @@ std::vector<Case> read_plan(const std::string& directory) {
             throw std::runtime_error("Unsafe case id");
         for (const auto& old : cases)
             if (old.id == c.id) throw std::runtime_error("Duplicate case id");
-        if (!admitted_shape(c)) throw std::runtime_error("Shape outside the fixed WMMA boundary cases");
+        if (!admitted_shape(c)) throw std::runtime_error(C550_WMMA_PREFIX
+            ? "Shape, suite or family outside the fixed WMMA prefix cases"
+            : "Shape outside the fixed WMMA boundary cases");
         if (c.warmups != 10 || c.samples != 10 || c.launches != 10)
             throw std::runtime_error("Probe fixes 10 warmups and 10 samples of 10 launches");
         c.a = read_operand(directory + "/" + c.id + ".a.f16");
         c.b = read_operand(directory + "/" + c.id + ".b.f16");
         validate_inputs(c);
         cases.push_back(std::move(c));
-        if (cases.size() > 12) throw std::runtime_error("Maximum 12 cases");
+        if (cases.size() > (C550_WMMA_PREFIX ? 34U : 12U))
+            throw std::runtime_error(C550_WMMA_PREFIX ? "Maximum 34 prefix cases" : "Maximum 12 cases");
     }
     if (!file.eof() || cases.empty()) throw std::runtime_error("Invalid or empty plan");
     return cases;
@@ -204,8 +232,11 @@ void retain_inputs(const Case& c, const char* phase, const __half* a, const __ha
         if (!file) throw std::runtime_error("Could not retain device input snapshot");
     }
     records << "{\"type\":\"input_snapshot\",\"id\":" << json_string(c.id)
-            << ",\"phase\":" << json_string(phase) << ",\"order\":" << json_string(c.order)
-            << ",\"operand_halfwords_each\":1024,\"a_file\":" << json_string(c.id + "." + phase + ".a.f16")
+            << ",\"phase\":" << json_string(phase) << ",\"order\":" << json_string(c.order);
+#if C550_WMMA_PREFIX
+    records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
+#endif
+    records << ",\"operand_halfwords_each\":1024,\"a_file\":" << json_string(c.id + "." + phase + ".a.f16")
             << ",\"b_file\":" << json_string(c.id + "." + phase + ".b.f16") << "}\n";
     records.flush();
 }
@@ -268,6 +299,10 @@ void run(const std::string& input_directory, const std::string& output_directory
                "\"input_rewrite_between_variants\":false,\"purpose\":\"correctness_diagnostic\",\"performance_accepted\":false,"
                "\"scalar_source_scope\":\"float operands and accumulator; compiler contraction and emitted instructions are not prescribed\"";
 #endif
+#if C550_WMMA_PREFIX
+    records << ",\"prefix_mode\":1,\"suite\":\"prefix-control\",\"prefix_families\":[\"singleton\",\"dense\"],"
+               "\"prefix_k_min\":0,\"prefix_k_max\":16,\"maximum_cases\":34";
+#endif
     records << "}\n";
     records.flush();
     __half *device_a = nullptr, *device_b = nullptr;
@@ -287,7 +322,11 @@ void run(const std::string& input_directory, const std::string& output_directory
 #if C550_WMMA_CONTROL
         records << "{\"type\":\"logical_case\",\"id\":" << json_string(c.id)
                 << ",\"m\":" << c.m << ",\"n\":" << c.n << ",\"k\":" << c.k
-                << ",\"order\":" << json_string(c.order) << "}\n";
+                << ",\"order\":" << json_string(c.order);
+#if C550_WMMA_PREFIX
+        records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
+#endif
+        records << "}\n";
         retain_inputs(c, "before", device_a, device_b, output_directory, records);
 #endif
         for (unsigned stage = 0; stage < variant_count; ++stage) {
@@ -331,6 +370,9 @@ void run(const std::string& input_directory, const std::string& output_directory
                     << ",\"localSizeBytes\":" << attributes.localSizeBytes << "}";
 #if C550_WMMA_CONTROL
             records << ",\"variant\":" << json_string(variant) << ",\"order\":" << json_string(c.order);
+#endif
+#if C550_WMMA_PREFIX
+            records << ",\"suite\":" << json_string(c.suite) << ",\"family\":" << json_string(c.family);
 #endif
             records << "}\n";
             records.flush();

@@ -268,3 +268,67 @@ Additional tests in `tests/test_wmma_control.py` exercise both orders, all three
 snapshot phases, missing/mutated snapshots, wrong suite and order, scalar indexing,
 mixed passing/failing variant results, nonfinite values, guard failures, complete
 failure JSON and compile-flag admission. The original strict tests remain intact.
+
+## Explicit logical-prefix suite
+
+`prepare --suite prefix-control` adds a separate paired WMMA/scalar diagnostic
+contract. It admits exactly two logical shape families:
+
+- `singleton`: `M=N=1`, with every integer `K` from 0 through 16;
+- `dense`: `M=N=16`, with every integer `K` from 0 through 16.
+
+The default plan therefore contains 34 logical cases. Both `--order wmma-first`
+and `--order scalar-first` are supported. The default order lists singleton
+K0–16, then dense K0–16; save any reversed case order explicitly in the run's
+TSV. An admitted subset remains possible for bounded diagnostics or profiling.
+
+```sh
+python3 experiments/wmma/experiment.py prepare /tmp/wmma-prefix-input \
+  --suite prefix-control --order wmma-first
+MXCC=/opt/maca/mxgpu_llvm/bin/mxcc C550_ARCH=xcore1000 \
+  C550_WMMA_CONTROL=1 C550_WMMA_PREFIX=1 \
+  bash experiments/wmma/compile.sh /tmp/wmma-prefix-probe
+```
+
+`C550_WMMA_PREFIX` defaults to zero and accepts only `0` or `1`. Prefix mode
+requires `C550_WMMA_CONTROL=1`; the script and source reject an incompatible
+combination. Its TSV has the exact columns
+`id, m, n, k, suite, family, order, warmups, samples, launches` (tab-separated).
+`suite` must be `prefix-control`; the declared family must match M and N, and K
+must remain within 0–16. Unknown families, nonsquare or other-sized matrices,
+K=17, mixed suites and more than 34 rows are refused before device calls.
+
+The prefix oracle and raw protocol use the distinct
+`wmma-scalar-fp32-prefix-control` experiment label. Protocol metadata declares
+the suite, both family names, K bounds and the deliberate 34-case limit.
+Logical-case, variant and input-snapshot records each bind their suite and
+family. The existing default and `scalar-control` formats still admit only
+their original twelve shapes and twelve-case limit. They reject the prefix
+header; prefix support does not extend their shape lists silently. Existing
+helper calls retain their original behavior unless prefix mode is explicit.
+
+Only logical data changes. The physical 16×16 tile, full-wave WMMA execution,
+256-thread scalar control, input formulas and /16 scale, four packed chunks,
+guards, three input readbacks and exact integer-dot/256 oracle are unchanged.
+K=0 stores the zero accumulator; each K from 1 through 16 uses one source-level
+WMMA step with its remaining K positions zero-padded. There is no tolerance or
+performance acceptance. One complete order checks 17,408 C payload words,
+8,704 guards and 208,896 snapshot halfwords, with 7,480 kernel launches.
+
+For a fixed K, A's row 0 and B's column 0 contain the same words in both families,
+so the C[0,0] reference is invariant. Other physical rows and columns are zero
+in the singleton family and retain their existing formulas in the dense family.
+The experiment observes whether that change affects the WMMA response; it does
+not assume that singleton cases pass or that previous dense failures disappear.
+
+After each family's complete K0–16 scan, report separately the smallest tested
+K with any observed WMMA residual and the smallest tested K with a C[0,0]
+residual. Retain every condition, including passing cases. These are minima
+within the declared input families, not global minimal counterexamples. A
+subset or incomplete scan must report its unexamined conditions rather than
+claiming such a minimum. Prior failed records remain unchanged.
+
+`tests/test_wmma_prefix.py` checks family/admission boundaries, the explicit
+compile flags, both orders, complete failed-diagnostic reporting, old-parser
+refusal of the new header, and the unchanged C[0,0] input/reference relationship.
+These CPU checks do not establish any device outcome for the prefix suite.

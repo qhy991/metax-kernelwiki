@@ -129,8 +129,18 @@ This narrows the investigation to the instrumented WMMA path. The three capture 
 
 The README, wiki pages, documentation, probe guides, and catalog now use canonical English. Home links and reproduction links make it easier to move between explanations, protocols, and retained evidence. Original results and the failed WMMA status are preserved. These documentation and navigation changes required no GPU execution.
 
+## 2026-10-08: Logical WMMA prefixes and a two-product witness
+
+Frozen source `0cddd51` introduced a separate paired prefix suite: M=N=1 and M=N=16, each with K0–16, while preserving both kernel bodies, the exact integer oracle, full physical participation and input snapshots. Clean-source verification passed 127 CPU checks. All three modes compiled, and nine host negative controls refused invalid families, K, order, padding, headers or case count before device APIs.
+
+Two complete 34-case sweeps used opposite case/implementation orders; singleton K16 and dense K16 traces were preselected. All 70 scalar matrices were exact. WMMA retained 931 unequal elements across 50 failing matrices; 20 matrices were exact. Inputs matched at all three capture boundaries, all outputs were finite and guards intact. Complete outputs matched across orders and corresponding traces. Every K gave identical C[0,0] words across singleton/dense families.
+
+Dense K2 first failed at C[13,2]: the two products 3/64 and -13/256 sum exactly to -1/256, but WMMA returned `0xbb800001` instead of `0xbb800000`. Singleton first failed at K4/C[0,0], which is also the earliest C00 failure for dense. C00 becomes exact again at K6,7,11,12; these are bounded earliest observations, not global minima or a persistent threshold.
+
+[Full prefix curve and witness](../wiki/wmma-exactness.md#successor-logical-k-prefixes-and-a-two-term-witness) · [All actual inputs, snapshots, outputs and batches](../data/results/20261008-wmma-prefix.json). The auxiliary old default/control regressions contribute another 24 logical cases and 36 outputs, all matching their earlier buffers. Overall: 94 logical cases, 176 outputs and 1,760 batches; all 82 scalar outputs exact, WMMA contract still failed, performance still unaccepted. Six workers and two profiled applications exited and passed release checks. No promotion to open-cake-ir.
+
 ## Next questions
 
-- Reduce logical M/N and K prefixes while retaining the complete 16×16 physical tile, input formulas, and scalar control to identify conditions under which residuals appear. The first witness is not a proven minimal counterexample.
+- Isolate the dense K2 witness at C[13,2] while preserving its two operands, then relocate those products to C[0,0] in a successor input contract. Keep physical participation, scalar controls and exact checks. The current scan did not perform this isolation.
 - Inspect generated code and the WMMA path's load/arithmetic implementation. Do not infer ISA behavior from the scalar source label or API fragment type.
 - Preserve the original failure, exact oracle, and non-performance diagnostic status. The container Triton route has only package-identity observations so far and cannot inherit qualification from the current native route.

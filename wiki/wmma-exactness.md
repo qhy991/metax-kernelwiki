@@ -2,9 +2,9 @@
 
 [Home](../README.md) · [Catalog](../data/catalog.json) · [Probe guide](../experiments/wmma/README.md)
 
-In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite.
+In this C550 / MACA 3.5.3.18 / MXCC `1.0.0 (6477545d4d)` environment, native 16×16×16 FP16 WMMA with a float accumulator fragment compiles and executes, but **does not satisfy the strict exact numerical contract for these inputs**. In the first 12 cases, K=0 and 1×1×1 pass exactly. The other 10 cases contain 177 outputs unequal to the predetermined reference. Prepared inputs are valid, guards are intact and all outputs are finite. A [logical-prefix successor](#successor-logical-k-prefixes-and-a-two-term-witness) now exposes a two-product witness at dense K=2 and a singleton C[0,0] witness at K=4.
 
-The first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
+In the initial sweep, the first mismatch is C[0,0] for 16×16×16: reference `-0.5` (`0xbf000000`), observed `-0.5000000596046448` (`0xbf000001`). Two independent processes and a diagnostic trace using the same frozen binary reproduce the complete original output words. The [raw inputs, outputs and diagnostic record](../data/results/20261008-wmma-exact-diagnostic.json) explicitly retain `correctness.passed=false` and `performance_accepted=false`. No tolerance is relaxed and no performance conclusion is drawn from the timings.
 
 ## Predetermined matrix and numerical contract
 
@@ -104,7 +104,54 @@ The paired trace has exactly 220 kernel events: 110 WMMA and 110 scalar events. 
 
 For this SDK, input and instrumentation, the scalar source path produces exact results from the shared device inputs while WMMA reproduces the original residuals. This narrows the investigation to the WMMA execution path under these conditions. Three snapshots establish state only at their capture boundaries; they do not exclude transient values inside the kernel, specialized fragment loads, different lowering or internal arithmetic. They do not uniquely attribute the cause to hardware.
 
-A next study can reduce logical matrix extents and K prefixes while preserving the complete physical tile and scalar control, then examine when residuals appear. Actual generated code still needs inspection. The first mismatch is not a proven globally minimal counterexample, and the observed error bound has not become a general tolerance.
+The successor below reduces logical matrix extents and K prefixes while preserving the physical tile and scalar control. Native instruction behavior remains unresolved. The first mismatch is not a proven globally minimal counterexample, and the observed error bound has not become a general tolerance.
+
+## Successor: logical K prefixes and a two-term witness
+
+Source `0cddd51` adds an explicit `prefix-control` suite with two logical families: `singleton` has M=N=1, and `dense` has M=N=16. Each scans every integer K from 0 through 16. The kernel bodies, physical 16×16 tile, full 64-thread WMMA participation, 256-thread scalar control, input formulas, exact oracle and three input snapshots remain unchanged. K=0 stores the zero accumulator; every positive K in this scan performs one source-level WMMA step with unused positions padded by zero. The [probe guide](../experiments/wmma/README.md#explicit-logical-prefix-suite) specifies its separate admission and metadata contract.
+
+The plan fixed two complete 34-case sweeps before execution: forward cases with WMMA first, then reversed cases with scalar first in another process. It also preselected singleton K16 and dense K16 for separate WMMA-first traces. The traces were not selected from the measured error curve and are excluded from the earliest-K calculation.
+
+All **70 scalar output matrices are exact**. WMMA has 20 exact matrices and 50 failing matrices, containing **931 unequal elements**: 450 in each complete sweep, one in the singleton trace, and 30 in the dense trace. All outputs are finite, all guards remain intact, and all **430,080 input-snapshot halfwords** match the prepared inputs and packing contract. All singleton padding outputs remain zero. These primary runs retain 140 output matrices and 1,400 timing batches; performance remains unaccepted.
+
+The two sweep orders produce identical complete output words, including guards, for every corresponding case and implementation. At every K, both families also produce identical C[0,0] words for each implementation. The A row0 and B column0 words are identical across the families, including all three device snapshots. Changing the surrounding logical matrix from singleton to dense therefore did not change the observed C[0,0] response in these scans. This observation does not establish general independence from surrounding data.
+
+The complete WMMA mismatch counts below are the same in both orders:
+
+| K | Singleton: unequal elements | Dense: unequal elements | C[0,0] exact in both families? |
+| ---: | ---: | ---: | --- |
+| 0 | 0 | 0 | Yes |
+| 1 | 0 | 0 | Yes |
+| 2 | 0 | 1 | Yes |
+| 3 | 0 | 2 | Yes |
+| 4 | 1 | 42 | No |
+| 5 | 1 | 99 | No |
+| 6 | 0 | 47 | Yes |
+| 7 | 0 | 22 | Yes |
+| 8 | 1 | 22 | No |
+| 9 | 1 | 31 | No |
+| 10 | 1 | 33 | No |
+| 11 | 0 | 21 | Yes |
+| 12 | 0 | 12 | Yes |
+| 13 | 1 | 17 | No |
+| 14 | 1 | 33 | No |
+| 15 | 1 | 29 | No |
+| 16 | 1 | 30 | No |
+
+For this complete declared grid, the earliest **any-output** residual is K=2 for dense and K=4 for singleton. The earliest C[0,0] residual is K=4 in both families. This is not a persistent threshold: C[0,0] becomes exact again at K=6,7,11,12. The minima apply only to these fixed input families; they are not globally minimal counterexamples or an admission rule for other inputs.
+
+| Witness | Exact reference | Observed WMMA value | Reference / observed FP32 words |
+| --- | ---: | ---: | --- |
+| Dense K2, C[13,2] | -0.00390625 | -0.003906250465661287 | `0xbb800000` / `0xbb800001` |
+| Singleton K4, C[0,0] | 0.0390625 | 0.039062488824129105 | `0x3d200000` / `0x3d1ffffd` |
+
+The dense K2 witness is its matrix's only mismatch. Its two nonzero operand pairs are A=[-3/4, 1/16] and B=[-1/16, -13/16], giving products [3/64, -13/256] and exact sum **-1/256**. Scalar source returns that exact value; WMMA differs by `-2^-31`. The singleton K4 residual is `-3*2^-28`. These are arithmetic witnesses inside the declared physical tile, not measurements of an isolated native instruction. The largest absolute residual across the primary prefix cases is `5.960464477539063e-8`; it is not a general error bound.
+
+Both preselected K16 traces match the complete outputs of their corresponding sweeps. Each contains 220 actual kernel events, split into separate 110-event WMMA/scalar groups with their own ten warmups. The tool reports WMMA block64/28 registers and scalar block256/36 registers, zero shared/private memory, and 110 false recompilation flags per group. Trace time units remain unverified, and neither timings nor resource descriptors establish the arithmetic cause.
+
+The [complete prefix result](../data/results/20261008-wmma-prefix.json) also retains 12 old default cases and 12 old paired-control cases as regressions. Their 36 output buffers match the corresponding earlier public results. Across primary and regression runs, all 82 scalar matrices are exact; the overall record remains `correctness.passed=false` and `performance_accepted=false`. It contains 94 logical cases, 176 output matrices, 45,056 payload words, 22,528 guards, 192,512 prepared input halfwords, 503,808 captured input halfwords and 1,760 raw timing batches. All six workers and two profiled applications exited and passed release checks. No result was promoted to open-cake-ir.
+
+A bounded next experiment can preserve the dense K2 witness at C[13,2] while zeroing unrelated rows and columns, then relocate the same two products to C[0,0] under a new input contract. That can test surrounding-data and position effects. The current experiment neither performs that isolation nor uniquely assigns the residual to hardware, a compiler transformation, fragment loading or internal arithmetic.
 
 [wmma]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#warp-matrix
 [types]: https://developer.metax-tech.com/api/client/document/preview/编程参考/MXMACA%20C%2B%2B编程指南/曦云C500系列/3.5.3.x/split_files/c_语言扩展.html#nhvxy67mk8uv1

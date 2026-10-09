@@ -6,6 +6,7 @@ The wiki is written in **English**. Original source URLs retain their published 
 
 ## Start here
 
+- **Understanding the agent skill?** Open the [visual overview](docs/overview.html) in a browser, or read its [source](docs/overview.am.md). It explains retrieval, evidence labels, representative findings and the boundary with open-cake-ir.
 - **Writing a C550 kernel?** Read [device identity](wiki/device-identity.md) and the [MACA toolchain guide](docs/toolchain.md), then search for the operation or mechanism you need.
 - **Evaluating an optimization?** Read the [measurement contract](docs/methodology.md) and the relevant finding below. Check its inputs, software version, correctness result, and limitations.
 - **Inspecting compiled code?** Follow [compiled MACA artifacts](docs/compiled-artifacts.md) for retained-binary extraction, bitcode decoding, module-loading routes, and [runtime cache contents](docs/compiled-artifacts.md#retained-runtime-caches-contain-distinct-native-artifacts).

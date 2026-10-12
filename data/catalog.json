@@ -318,6 +318,34 @@
       ],
       "result": "data/results/20261008-wmma-wrapped-q7.json",
       "limitations": "The primary result covers one native q7 control and three direct-wrapper pairs: WMMA fails exact C00, scalar passes. Producer load/lookup adds no numerical result; the earlier carrier remains refused. Later cache inspection finds changed artifacts without new execution. General format support, final instructions, arithmetic cause and performance remain unqualified."
+    },
+    {
+      "id": "c550-conditional-operator-optimization",
+      "title": "Conditional RMSNorm and stable-routing mechanisms from external C550 studies",
+      "tags": [
+        "C550",
+        "agent",
+        "RMSNorm",
+        "normalization",
+        "execution groups",
+        "warps",
+        "row grouping",
+        "stable routing",
+        "integer key",
+        "scan block",
+        "tiling",
+        "failure diagnosis",
+        "baseline"
+      ],
+      "confidence": "source-reported",
+      "evidence_scope": "external-observation",
+      "path": "wiki/conditional-operator-optimization.md",
+      "sources": [
+        "https://github.com/qhy991/open-cake-ir/blob/c35a0f8f308eb2cc34f87f1e1becd98033daaf3d/docs/results/metax/RMS_FACTOR_ABLATION_20261011.md",
+        "https://github.com/qhy991/open-cake-ir/blob/c35a0f8f308eb2cc34f87f1e1becd98033daaf3d/docs/results/metax/STABLE_ROUTING_SEARCH_20261011.md",
+        "https://github.com/qhy991/open-cake-ir/blob/c35a0f8f308eb2cc34f87f1e1becd98033daaf3d/docs/results/metax/EXPERIMENT_AUDIT_20261012.md"
+      ],
+      "limitations": "External open-cake-ir reports, not new KernelWiki measurements. Initial CAKE baselines, fixed shapes, value ranges and numeric/timing contracts apply. No universal parameters, strong-library advantage, Compiler causality or cross-hardware result; current caller admission and material permissions remain separate."
     }
   ]
 }

@@ -1,5 +1,14 @@
 # MetaX KernelWiki authoring
 
+## GitHub Project tracking
+
+For newly authorized qhy991-managed work, follow the canonical
+[agent tracking policy](https://github.com/users/qhy991/projects/1) in the
+Project README. Read it before task work and perform its checkpoint updates
+through the authenticated GitHub CLI/API. This binding adds tracking metadata
+only; the repository's existing issue, lifecycle, resource, privacy and acceptance
+rules retain their authority.
+
 - This independent repository owns C550 kernel knowledge and probes. It does not own open-cake-ir Target declarations, GPU allocation or deployment policy.
 - Read `docs/methodology.md` before experiments and the current `gpu-infra` GPU lease lifecycle before any device work. Reuse the node's existing allocator. Do not replace a live broker or interfere with other jobs.
 - Keep `data/catalog.json` the single retrieval index. Put explanations in `wiki/`, source guidance in `docs/`, bounded raw-result projections in `data/results/`, and reproducible probes in `experiments/`.

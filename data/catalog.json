@@ -349,7 +349,7 @@
     },
     {
       "id": "c500-training-lessons",
-      "title": "C500 Triton optimization lessons from a 61-task training round: FP32 dot tiles, attention row-block reuse, timing floor and launch limits",
+      "title": "C500 Triton optimization lessons from a 61-task training round: FP32 dot tiles, decode attention, timing floor and launch limits",
       "tags": [
         "C500",
         "xcore1000",

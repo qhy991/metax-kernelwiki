@@ -95,8 +95,9 @@ host-side cost or the number of launches is the remaining lever.
 - **Grouping rows into one program:** for row-wise normalizations (RMSNorm, LayerNorm and residual
   variants, 128-1024 rows), grouping 2-16 rows was slower than one row per program, typically 0.4-0.8×.
 - **Splitting a row reduction across programs:** for cross-row reductions this needs a second kernel or
-  atomics. The task authors skipped it because the starting kernels already took about 4.6-5 us, close to the
-  floor, so a second launch was expected to cost more than it could save. This was not measured.
+  atomics. It was not measured. Most authors skipped it because the starting kernels (about 4.6-5 us) were
+  dominated by dispatch, so a second launch was expected to cost more than it could save; one task could not
+  express the cross-program combine at all.
 - **Pairwise distance:** row-group variants measured between 0.066 and 0.557 ms, all slower than the
   best non-grouped candidate.
 

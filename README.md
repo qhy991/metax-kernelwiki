@@ -25,6 +25,7 @@ The published device experiments use one **C550 with MACA 3.5.3.18**. Each page 
 | Launch bounds | A function attribute of 512 did not prevent the tested 1024-thread launch; explicit bounds changed the observed recompilation path. | [Launch bounds and runtime recompilation](wiki/launch-bounds.md) |
 | WMMA exactness | Direct native ELF and original bitcode-wrapper inputs both reproduce the q7 residual. A constructed bitcode carrier is rejected before execution. | [Current findings](wiki/wmma-exactness.md#current-findings) · [Direct-wrapper result](wiki/wmma-exactness.md#successor-direct-wrapped-bitcode-loads-and-retains-the-q7-residual) |
 | Profiling | A zero tool exit code does not establish a usable GPU trace. Kernel events and resource fields need separate checks; exported time units remain unverified. | [Trace acceptance](wiki/profiling.md) |
+| C500 Triton tuning | On one C500 round, FP32 `tl.dot` on 32×32 tiles beat the SIMT baseline about 25×; row-block K/V reuse plus a 2-way column split helped decode attention; many small kernels sat on a ~2.6–2.8 us floor; 16-warp and large per-thread tiles often failed at launch. | [C500 training lessons](wiki/c500-training-lessons.md) |
 
 These are bounded findings, not general hardware guarantees. In particular, documentation for another C500-series product does not establish a C550 measurement, and a microbenchmark gain does not establish an end-to-end gain.
 
